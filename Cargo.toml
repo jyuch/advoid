@@ -4,3 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
+async-trait = "0.1"
+hickory-server = "0.24.0"
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+
+[dependencies.tokio]
+version = "1"
+features = ["full"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
