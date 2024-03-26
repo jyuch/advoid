@@ -80,13 +80,12 @@ async fn forward_to_upstream<R: ResponseHandler>(
     request: &Request,
     mut response_handle: R,
 ) -> anyhow::Result<ResponseInfo> {
-    let response = upstream
-        .query(
-            request.query().name().into_name().unwrap(),
-            request.query().query_class(),
-            request.query().query_type(),
-        )
-        .await?;
+    let name = request.query().name().into_name()?;
+    let class = request.query().query_class();
+    let tpe = request.query().query_type();
+
+    println!("{} {} {}", name, class, tpe);
+    let response = upstream.query(name, class, tpe).await?;
 
     let response_builder = MessageResponseBuilder::from_message_request(request);
     let response = response_builder.build(
