@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -80,12 +81,13 @@ async fn forward_to_upstream<R: ResponseHandler>(
     request: &Request,
     mut response_handle: R,
 ) -> anyhow::Result<ResponseInfo> {
+    let stopwatch = Instant::now();
+
     let name = request.query().name().into_name()?;
     let class = request.query().query_class();
     let tpe = request.query().query_type();
 
-    println!("{} {} {}", name, class, tpe);
-    let response = upstream.query(name, class, tpe).await?;
+    let response = upstream.query(name.clone(), class, tpe).await?;
 
     let response_builder = MessageResponseBuilder::from_message_request(request);
     let response = response_builder.build(
@@ -97,6 +99,13 @@ async fn forward_to_upstream<R: ResponseHandler>(
     );
     let response_info = response_handle.send_response(response).await?;
 
+    println!(
+        "{} {} {} in {}[ms]",
+        name,
+        class,
+        tpe,
+        stopwatch.elapsed().as_millis()
+    );
     Ok(response_info)
 }
 
