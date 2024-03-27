@@ -14,7 +14,8 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tokio::time::Instant;
+use tracing_subscriber::fmt::time::LocalTime;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -33,6 +34,13 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_timer(LocalTime::rfc_3339())
+        .with_env_filter(EnvFilter::from_default_env())
+        //.with_file(true)
+        //.with_line_number(true)
+        .init();
+
     let opt = Cli::parse();
 
     let mut block_list_file = File::open(opt.block).await?;
@@ -120,25 +128,17 @@ impl StubRequestHandler {
         let tpe = request.query().query_type();
 
         let response_info = if self.is_blacklist_subdomain(&name.to_string()).await {
-            println!("{} {} {} blocking", name, class, tpe);
             let response_builder = MessageResponseBuilder::from_message_request(request);
             let response = response_builder.build(*request.header(), &[], &[], &[], &[]);
             response_handle.send_response(response).await?
         } else {
-            let stopwatch = Instant::now();
             let dns_response = self
                 .upstream
                 .lock()
                 .await
                 .query(name.clone(), class, tpe)
                 .await?;
-            println!(
-                "{} {} {} in {}[ms]",
-                name,
-                class,
-                tpe,
-                stopwatch.elapsed().as_millis()
-            );
+
             let response_builder = MessageResponseBuilder::from_message_request(request);
             let response =
                 response_builder.build(*request.header(), dns_response.answers(), &[], &[], &[]);

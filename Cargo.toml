@@ -17,6 +17,13 @@ features = ["derive"]
 version = "1"
 features = ["full"]
 
+[dependencies.tracing]
+version = "0.1"
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["std", "env-filter", "time", "local-time"]
+
 [profile.release]
 codegen-units = 1
 lto = true
