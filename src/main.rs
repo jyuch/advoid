@@ -68,15 +68,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 struct CheckedDomain {
-    blacklist: HashSet<String>,
-    whitelist: HashSet<String>,
+    block: HashSet<String>,
+    allow: HashSet<String>,
 }
 
 impl CheckedDomain {
     pub fn new() -> Self {
         CheckedDomain {
-            blacklist: HashSet::new(),
-            whitelist: HashSet::new(),
+            block: HashSet::new(),
+            allow: HashSet::new(),
         }
     }
 }
@@ -99,22 +99,22 @@ impl StubRequestHandler {
     async fn is_blacklist_subdomain(&self, domain: &String) -> bool {
         let mut checked = self.checked.lock().await;
 
-        if checked.blacklist.contains(domain) {
+        if checked.block.contains(domain) {
             return true;
         }
 
-        if checked.whitelist.contains(domain) {
+        if checked.allow.contains(domain) {
             return false;
         }
 
         for it in &self.blacklist {
             if domain.ends_with(it) {
-                checked.blacklist.insert(domain.to_string());
+                checked.block.insert(domain.to_string());
                 return true;
             }
         }
 
-        checked.whitelist.insert(domain.to_string());
+        checked.allow.insert(domain.to_string());
         false
     }
 
