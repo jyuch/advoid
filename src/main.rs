@@ -14,6 +14,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
+use tracing::{error, warn};
 use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::EnvFilter;
 
@@ -184,6 +185,11 @@ impl RequestHandler for StubRequestHandler {
             resp_edns.set_version(our_version);
 
             if req_edns.version() > our_version {
+                warn!(
+                    "request edns version greater than {}: {}",
+                    our_version,
+                    req_edns.version()
+                );
                 response_header.set_response_code(ResponseCode::BADVERS);
                 resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
                 response.edns(resp_edns);
@@ -194,7 +200,8 @@ impl RequestHandler for StubRequestHandler {
                     .await;
 
                 // couldn't handle the request
-                return result.unwrap_or_else(|_e| {
+                return result.unwrap_or_else(|e| {
+                    error!("request error: {}", e);
                     let mut header = Header::new();
                     header.set_response_code(ResponseCode::ServFail);
                     header.into()
@@ -209,12 +216,16 @@ impl RequestHandler for StubRequestHandler {
         let result = match request.message_type() {
             MessageType::Query => match request.op_code() {
                 OpCode::Query => self.forward_to_upstream(request, response_handle).await,
-                _op => self.server_not_implement(request, response_handle).await,
+                c => {
+                    warn!("unimplemented op_code: {:?}", c);
+                    self.server_not_implement(request, response_handle).await
+                }
             },
             MessageType::Response => self.server_not_implement(request, response_handle).await,
         };
 
-        result.unwrap_or_else(|_e| {
+        result.unwrap_or_else(|e| {
+            error!("request failed: {}", e);
             let mut header = Header::new();
             header.set_response_code(ResponseCode::ServFail);
             header.into()
