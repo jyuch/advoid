@@ -1,12 +1,15 @@
 use clap::Parser;
 use hickory_client::client::{AsyncClient, ClientHandle};
+
+use hickory_client::rr::Record;
 use hickory_client::udp::UdpClientStream;
-use hickory_server::authority::MessageResponseBuilder;
+use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
 use hickory_server::proto::rr::IntoName;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use hickory_server::ServerFuture;
 use std::collections::HashSet;
+use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,17 +124,16 @@ impl StubRequestHandler {
 
     async fn forward_to_upstream<R: ResponseHandler>(
         &self,
+        response_edns: Option<Edns>,
         request: &Request,
-        mut response_handle: R,
+        response_handle: R,
     ) -> anyhow::Result<ResponseInfo> {
         let name = request.query().name().into_name()?;
         let class = request.query().query_class();
         let tpe = request.query().query_type();
 
-        let response_info = if self.is_blacklist_subdomain(&name.to_string()).await {
-            let response_builder = MessageResponseBuilder::from_message_request(request);
-            let response = response_builder.build(*request.header(), &[], &[], &[], &[]);
-            response_handle.send_response(response).await?
+        let dns_response = if self.is_blacklist_subdomain(&name.to_string()).await {
+            None
         } else {
             let dns_response = self
                 .upstream
@@ -139,25 +141,36 @@ impl StubRequestHandler {
                 .await
                 .query(name.clone(), class, tpe)
                 .await?;
-
-            let response_builder = MessageResponseBuilder::from_message_request(request);
-            let response =
-                response_builder.build(*request.header(), dns_response.answers(), &[], &[], &[]);
-            response_handle.send_response(response).await?
+            Some(dns_response)
         };
+
+        let response_header = Header::response_from_request(request.header());
+        let response_builder = MessageResponseBuilder::from_message_request(request);
+        let response = response_builder.build(
+            response_header,
+            dns_response.as_ref().map(|it| it.answers()).unwrap_or(&[]),
+            &[],
+            &[],
+            &[],
+        );
+        let response_info = send_response(response_edns, response, response_handle).await?;
 
         Ok(response_info)
     }
 
     async fn server_not_implement<R: ResponseHandler>(
         &self,
+        response_edns: Option<Edns>,
         request: &Request,
-        mut response_handle: R,
+        response_handle: R,
     ) -> anyhow::Result<ResponseInfo> {
         let response = MessageResponseBuilder::from_message_request(request);
-        let response_info = response_handle
-            .send_response(response.error_msg(request.header(), ResponseCode::NotImp))
-            .await?;
+        let response_info = send_response(
+            response_edns,
+            response.error_msg(request.header(), ResponseCode::NotImp),
+            response_handle,
+        )
+        .await?;
 
         Ok(response_info)
     }
@@ -171,7 +184,7 @@ impl RequestHandler for StubRequestHandler {
         mut response_handle: R,
     ) -> ResponseInfo {
         // check if it's edns
-        let _response_edns = if let Some(req_edns) = request.edns() {
+        let response_edns = if let Some(req_edns) = request.edns() {
             let mut response = MessageResponseBuilder::from_message_request(request);
             let mut response_header = Header::response_from_request(request.header());
 
@@ -215,13 +228,20 @@ impl RequestHandler for StubRequestHandler {
 
         let result = match request.message_type() {
             MessageType::Query => match request.op_code() {
-                OpCode::Query => self.forward_to_upstream(request, response_handle).await,
+                OpCode::Query => {
+                    self.forward_to_upstream(response_edns, request, response_handle)
+                        .await
+                }
                 c => {
                     warn!("unimplemented op_code: {:?}", c);
-                    self.server_not_implement(request, response_handle).await
+                    self.server_not_implement(response_edns, request, response_handle)
+                        .await
                 }
             },
-            MessageType::Response => self.server_not_implement(request, response_handle).await,
+            MessageType::Response => {
+                self.server_not_implement(response_edns, request, response_handle)
+                    .await
+            }
         };
 
         result.unwrap_or_else(|e| {
@@ -231,4 +251,40 @@ impl RequestHandler for StubRequestHandler {
             header.into()
         })
     }
+}
+
+#[allow(unused_mut, unused_variables)]
+async fn send_response<'a, R: ResponseHandler>(
+    response_edns: Option<Edns>,
+    mut response: MessageResponse<
+        '_,
+        'a,
+        impl Iterator<Item = &'a Record> + Send + 'a,
+        impl Iterator<Item = &'a Record> + Send + 'a,
+        impl Iterator<Item = &'a Record> + Send + 'a,
+        impl Iterator<Item = &'a Record> + Send + 'a,
+    >,
+    mut response_handle: R,
+) -> io::Result<ResponseInfo> {
+    if let Some(mut resp_edns) = response_edns {
+        #[cfg(feature = "dnssec")]
+        {
+            // set edns DAU and DHU
+            // send along the algorithms which are supported by this authority
+            let mut algorithms = SupportedAlgorithms::default();
+            algorithms.set(Algorithm::RSASHA256);
+            algorithms.set(Algorithm::ECDSAP256SHA256);
+            algorithms.set(Algorithm::ECDSAP384SHA384);
+            algorithms.set(Algorithm::ED25519);
+
+            let dau = EdnsOption::DAU(algorithms);
+            let dhu = EdnsOption::DHU(algorithms);
+
+            resp_edns.options_mut().insert(dau);
+            resp_edns.options_mut().insert(dhu);
+        }
+        response.set_edns(resp_edns);
+    }
+
+    response_handle.send_response(response).await
 }
