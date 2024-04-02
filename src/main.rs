@@ -1,6 +1,5 @@
 use clap::Parser;
 use hickory_client::client::{AsyncClient, ClientHandle};
-
 use hickory_client::rr::Record;
 use hickory_client::udp::UdpClientStream;
 use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
@@ -8,7 +7,7 @@ use hickory_server::proto::op::{Edns, Header, MessageType, OpCode, ResponseCode}
 use hickory_server::proto::rr::IntoName;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use hickory_server::ServerFuture;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -50,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     let mut block_list_file = File::open(opt.block).await?;
     let mut buf = String::new();
     let _ = block_list_file.read_to_string(&mut buf).await?;
-    let blacklist: HashSet<String> = buf
+    let blacklist: FxHashSet<String> = buf
         .lines()
         .map(|it| it.trim().to_string())
         .filter(|it| !it.is_empty())
@@ -72,27 +71,27 @@ async fn main() -> anyhow::Result<()> {
 }
 
 struct CheckedDomain {
-    block: HashSet<String>,
-    allow: HashSet<String>,
+    block: FxHashSet<String>,
+    allow: FxHashSet<String>,
 }
 
 impl CheckedDomain {
     pub fn new() -> Self {
         CheckedDomain {
-            block: HashSet::new(),
-            allow: HashSet::new(),
+            block: FxHashSet::default(),
+            allow: FxHashSet::default(),
         }
     }
 }
 
 struct StubRequestHandler {
     upstream: Arc<Mutex<AsyncClient>>,
-    blacklist: HashSet<String>,
+    blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
 }
 
 impl StubRequestHandler {
-    pub fn new(upstream: Arc<Mutex<AsyncClient>>, blacklist: HashSet<String>) -> Self {
+    pub fn new(upstream: Arc<Mutex<AsyncClient>>, blacklist: FxHashSet<String>) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
