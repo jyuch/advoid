@@ -1,3 +1,5 @@
+mod trace;
+
 use clap::Parser;
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::Record;
@@ -16,9 +18,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tracing::{error, warn};
-use tracing_subscriber::fmt::time::LocalTime;
-use tracing_subscriber::EnvFilter;
+use tracing::{debug, error, instrument, warn};
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -33,18 +33,24 @@ struct Cli {
     /// Block file path
     #[clap(long)]
     block: PathBuf,
+
+    /// OTel endpoint
+    #[clap(long)]
+    otel: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_timer(LocalTime::rfc_3339())
-        .with_env_filter(EnvFilter::from_default_env())
-        //.with_file(true)
-        //.with_line_number(true)
-        .init();
-
     let opt = Cli::parse();
+
+    let _guard = if let Some(otel) = opt.otel {
+        let service = env!("CARGO_PKG_NAME");
+        let version = env!("CARGO_PKG_VERSION");
+        Some(trace::init_tracing(service, version, otel))
+    } else {
+        trace::init_tracing_without_otel();
+        None
+    };
 
     let mut block_list_file = File::open(opt.block).await?;
     let mut buf = String::new();
@@ -99,6 +105,7 @@ impl StubRequestHandler {
         }
     }
 
+    #[instrument(skip_all)]
     async fn is_blacklist_subdomain(&self, domain: &String) -> bool {
         let mut checked = self.checked.lock().await;
 
@@ -121,6 +128,7 @@ impl StubRequestHandler {
         false
     }
 
+    #[instrument(skip_all)]
     async fn forward_to_upstream<R: ResponseHandler>(
         &self,
         response_edns: Option<Edns>,
@@ -132,6 +140,7 @@ impl StubRequestHandler {
         let tpe = request.query().query_type();
 
         let dns_response = if self.is_blacklist_subdomain(&name.to_string()).await {
+            debug!("Bypassing upstream query {}", &name.to_string());
             None
         } else {
             let dns_response = self
@@ -157,6 +166,7 @@ impl StubRequestHandler {
         Ok(response_info)
     }
 
+    #[instrument(skip_all)]
     async fn server_not_implement<R: ResponseHandler>(
         &self,
         response_edns: Option<Edns>,
@@ -177,6 +187,7 @@ impl StubRequestHandler {
 
 #[async_trait::async_trait]
 impl RequestHandler for StubRequestHandler {
+    #[instrument(skip_all)]
     async fn handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
@@ -253,6 +264,7 @@ impl RequestHandler for StubRequestHandler {
 }
 
 #[allow(unused_mut, unused_variables)]
+#[instrument(skip_all)]
 async fn send_response<'a, R: ResponseHandler>(
     response_edns: Option<Edns>,
     mut response: MessageResponse<

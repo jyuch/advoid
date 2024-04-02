@@ -21,9 +21,31 @@ features = ["full"]
 [dependencies.tracing]
 version = "0.1"
 
+[dependencies.tracing-futures]
+version = "0.2"
+
+[dependencies.tracing-opentelemetry]
+version = "0.23"
+default-features = false
+features = ["tracing-log", "metrics"]
+
 [dependencies.tracing-subscriber]
 version = "0.3"
 features = ["std", "env-filter", "time", "local-time"]
+
+[dependencies.opentelemetry]
+version = "0.22"
+default-features = false
+features = ["trace", "metrics"]
+
+[dependencies.opentelemetry_sdk]
+version = "0.22"
+features = ["rt-tokio"]
+
+[dependencies.opentelemetry-otlp]
+version = "0.15"
+default-features = false
+features = ["grpc-tonic", "trace", "metrics"]
 
 [profile.release]
 codegen-units = 1
