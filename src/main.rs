@@ -106,7 +106,7 @@ impl StubRequestHandler {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip(self))]
     async fn is_blacklist_subdomain(&self, domain: &String) -> bool {
         let mut checked = self.checked.lock().await;
 
