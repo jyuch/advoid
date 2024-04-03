@@ -2,7 +2,8 @@ mod trace;
 
 use clap::Parser;
 use hickory_client::client::{AsyncClient, ClientHandle};
-use hickory_client::rr::Record;
+use hickory_client::op::DnsResponse;
+use hickory_client::rr::{DNSClass, Name, Record, RecordType};
 use hickory_client::udp::UdpClientStream;
 use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
@@ -128,8 +129,22 @@ impl StubRequestHandler {
         false
     }
 
+    #[instrument(skip(self))]
+    async fn forward_to_upstream(
+        &self,
+        name: Name,
+        query_class: DNSClass,
+        query_type: RecordType,
+    ) -> anyhow::Result<DnsResponse> {
+        let mut upstream = { self.upstream.lock().await.clone() };
+        let response = upstream
+            .query(name.clone(), query_class, query_type)
+            .await?;
+        Ok(response)
+    }
+
     #[instrument(skip_all)]
-    async fn forward_to_upstream<R: ResponseHandler>(
+    async fn handle_query<R: ResponseHandler>(
         &self,
         response_edns: Option<Edns>,
         request: &Request,
@@ -143,12 +158,7 @@ impl StubRequestHandler {
             debug!("Bypassing upstream query {}", &name.to_string());
             None
         } else {
-            let dns_response = self
-                .upstream
-                .lock()
-                .await
-                .query(name.clone(), class, tpe)
-                .await?;
+            let dns_response = self.forward_to_upstream(name.clone(), class, tpe).await?;
             Some(dns_response)
         };
 
@@ -239,7 +249,7 @@ impl RequestHandler for StubRequestHandler {
         let result = match request.message_type() {
             MessageType::Query => match request.op_code() {
                 OpCode::Query => {
-                    self.forward_to_upstream(response_edns, request, response_handle)
+                    self.handle_query(response_edns, request, response_handle)
                         .await
                 }
                 c => {
