@@ -5,6 +5,7 @@ use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use rustc_hash::FxHashSet;
 use std::io;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
@@ -27,14 +28,20 @@ pub struct StubRequestHandler {
     upstream: Arc<Mutex<AsyncClient>>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
+    counter: Arc<AtomicU32>,
 }
 
 impl StubRequestHandler {
-    pub fn new(upstream: Arc<Mutex<AsyncClient>>, blacklist: FxHashSet<String>) -> Self {
+    pub fn new(
+        upstream: Arc<Mutex<AsyncClient>>,
+        blacklist: FxHashSet<String>,
+        counter: Arc<AtomicU32>,
+    ) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
             checked: Arc::new(Mutex::new(CheckedDomain::new())),
+            counter,
         }
     }
 
@@ -135,6 +142,8 @@ impl RequestHandler for StubRequestHandler {
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
+        self.counter.fetch_add(1, Ordering::SeqCst);
+
         // check if it's edns
         let response_edns = if let Some(req_edns) = request.edns() {
             let mut response = MessageResponseBuilder::from_message_request(request);
