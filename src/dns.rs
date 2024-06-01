@@ -101,13 +101,21 @@ impl StubRequestHandler {
             Some(dns_response)
         };
 
-        let response_header = Header::response_from_request(request.header());
         let response_builder = MessageResponseBuilder::from_message_request(request);
 
         let response_info = match upstream_response {
             Some(response) => {
-                let response =
-                    response_builder.build(response_header, response.answers(), &[], &[], &[]);
+                let mut response_header = Header::response_from_request(request.header());
+                response_header.set_recursion_available(response.recursion_available());
+                response_header.set_response_code(response.response_code());
+
+                let response = response_builder.build(
+                    response_header,
+                    response.answers(),
+                    response.name_servers(),
+                    &[],
+                    response.additionals(),
+                );
                 send_response(response_edns, response, response_handle).await?
             }
             None => {
