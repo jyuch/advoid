@@ -93,7 +93,7 @@ impl StubRequestHandler {
         let class = request.query().query_class();
         let tpe = request.query().query_type();
 
-        let dns_response = if self.is_blacklist_subdomain(&name.to_string()).await {
+        let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
             debug!("Bypassing upstream query {}", &name.to_string());
             None
         } else {
@@ -103,14 +103,18 @@ impl StubRequestHandler {
 
         let response_header = Header::response_from_request(request.header());
         let response_builder = MessageResponseBuilder::from_message_request(request);
-        let response = response_builder.build(
-            response_header,
-            dns_response.as_ref().map(|it| it.answers()).unwrap_or(&[]),
-            &[],
-            &[],
-            &[],
-        );
-        let response_info = send_response(response_edns, response, response_handle).await?;
+
+        let response_info = match upstream_response {
+            Some(response) => {
+                let response =
+                    response_builder.build(response_header, response.answers(), &[], &[], &[]);
+                send_response(response_edns, response, response_handle).await?
+            }
+            None => {
+                let response = response_builder.error_msg(request.header(), ResponseCode::NXDomain);
+                send_response(response_edns, response, response_handle).await?
+            }
+        };
 
         Ok(response_info)
     }
