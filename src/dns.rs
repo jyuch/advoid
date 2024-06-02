@@ -5,7 +5,6 @@ use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use rustc_hash::FxHashSet;
 use std::io;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
@@ -28,20 +27,14 @@ pub struct StubRequestHandler {
     upstream: Arc<Mutex<AsyncClient>>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
-    counter: Arc<AtomicU32>,
 }
 
 impl StubRequestHandler {
-    pub fn new(
-        upstream: Arc<Mutex<AsyncClient>>,
-        blacklist: FxHashSet<String>,
-        counter: Arc<AtomicU32>,
-    ) -> Self {
+    pub fn new(upstream: Arc<Mutex<AsyncClient>>, blacklist: FxHashSet<String>) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
             checked: Arc::new(Mutex::new(CheckedDomain::new())),
-            counter,
         }
     }
 
@@ -95,9 +88,11 @@ impl StubRequestHandler {
 
         let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
             debug!("Bypassing upstream query {}", &name.to_string());
+            metrics::counter!("dns_requests_block").increment(1);
             None
         } else {
             let dns_response = self.forward_to_upstream(name.clone(), class, tpe).await?;
+            metrics::counter!("dns_requests_forward").increment(1);
             Some(dns_response)
         };
 
@@ -154,7 +149,7 @@ impl RequestHandler for StubRequestHandler {
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
-        self.counter.fetch_add(1, Ordering::SeqCst);
+        metrics::counter!("dns_requests_total").increment(1);
 
         // check if it's edns
         let response_edns = if let Some(req_edns) = request.edns() {

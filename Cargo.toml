@@ -54,6 +54,14 @@ version = "0.16"
 default-features = false
 features = ["grpc-tonic", "trace", "metrics"]
 
+[dependencies.metrics]
+version = "0.23"
+default-features = false
+
+[dependencies.metrics-exporter-prometheus]
+version = "0.15"
+default-features = false
+
 [profile.release]
 codegen-units = 1
 lto = true
