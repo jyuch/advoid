@@ -6,9 +6,17 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-hickory-server = "0.24.1"
-hickory-client = { version = "0.24.1", default-features = false }
 rustc-hash = "1.1"
+
+[dependencies.hickory-proto]
+version = "0.24"
+
+[dependencies.hickory-server]
+version = "0.24"
+
+[dependencies.hickory-client]
+version = "0.24"
+default-features = false
 
 [dependencies.clap]
 version = "4"

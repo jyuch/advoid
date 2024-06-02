@@ -1,3 +1,4 @@
+use crate::dns::ForwardingType::{Blocked, Forwarded};
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::op::{DnsResponse, Edns, Header, MessageType, OpCode, ResponseCode};
 use hickory_client::rr::{DNSClass, IntoName, Name, Record, RecordType};
@@ -8,6 +9,11 @@ use std::io;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
+
+enum ForwardingType {
+    Forwarded(DnsResponse),
+    Blocked(DnsResponse),
+}
 
 struct CheckedDomain {
     block: FxHashSet<String>,
@@ -89,17 +95,20 @@ impl StubRequestHandler {
         let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
             debug!("Bypassing upstream query {}", &name.to_string());
             metrics::counter!("dns_requests_block").increment(1);
-            None
+            let dns_response = self
+                .forward_to_upstream(name.clone(), class, RecordType::SOA)
+                .await?;
+            Blocked(dns_response)
         } else {
-            let dns_response = self.forward_to_upstream(name.clone(), class, tpe).await?;
             metrics::counter!("dns_requests_forward").increment(1);
-            Some(dns_response)
+            let dns_response = self.forward_to_upstream(name.clone(), class, tpe).await?;
+            Forwarded(dns_response)
         };
 
         let response_builder = MessageResponseBuilder::from_message_request(request);
 
         let response_info = match upstream_response {
-            Some(response) => {
+            Forwarded(response) => {
                 let mut response_header = Header::response_from_request(request.header());
                 response_header.set_recursion_available(response.recursion_available());
                 response_header.set_response_code(response.response_code());
@@ -113,8 +122,17 @@ impl StubRequestHandler {
                 );
                 send_response(response_edns, response, response_handle).await?
             }
-            None => {
-                let response = response_builder.error_msg(request.header(), ResponseCode::NXDomain);
+            Blocked(response) => {
+                let mut response_header = Header::response_from_request(request.header());
+                response_header.set_recursion_available(request.header().recursion_desired());
+                response_header.set_response_code(ResponseCode::NXDomain);
+                let soa = response
+                    .soa()
+                    .map(|it| it.to_owned().into_record_of_rdata())
+                    .into_iter()
+                    .collect::<Vec<_>>();
+
+                let response = response_builder.build(response_header, &[], &[], &soa, &[]);
                 send_response(response_edns, response, response_handle).await?
             }
         };
