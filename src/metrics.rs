@@ -5,7 +5,7 @@ use std::future::ready;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
-pub(crate) async fn start_metrics_server(endpoint: SocketAddr) -> anyhow::Result<()> {
+pub async fn start_metrics_server(endpoint: SocketAddr) -> anyhow::Result<()> {
     let app = metrics_app()?;
     let listener = TcpListener::bind(endpoint).await?;
 

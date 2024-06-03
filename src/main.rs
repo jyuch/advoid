@@ -1,22 +1,16 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
-
+use advoid::dns::StubRequestHandler;
 use clap::Parser;
 use hickory_client::client::AsyncClient;
 use hickory_client::udp::UdpClientStream;
 use hickory_server::ServerFuture;
 use rustc_hash::FxHashSet;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-
-use crate::dns::StubRequestHandler;
-
-mod dns;
-mod metrics;
-mod trace;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -48,9 +42,9 @@ async fn main() -> anyhow::Result<()> {
     let _guard = if let Some(otel) = opt.otel {
         let service = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");
-        Some(trace::init_tracing(service, version, otel))
+        Some(advoid::trace::init_tracing(service, version, otel))
     } else {
-        trace::init_tracing_without_otel();
+        advoid::trace::init_tracing_without_otel();
         None
     };
 
@@ -79,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = server.block_until_done().await;
     });
 
-    metrics::start_metrics_server(opt.exporter).await?;
+    advoid::metrics::start_metrics_server(opt.exporter).await?;
 
     Ok(())
 }

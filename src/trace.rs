@@ -3,7 +3,7 @@ use opentelemetry_otlp::WithExportConfig;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-pub(crate) struct OtelInitGuard();
+pub struct OtelInitGuard();
 
 impl Drop for OtelInitGuard {
     fn drop(&mut self) {
@@ -23,7 +23,7 @@ fn build_meter_provider(endpoint: String) -> impl MeterProvider {
         .expect("Failed to build metrics controller")
 }
 
-pub(crate) fn init_tracing(
+pub fn init_tracing(
     service: &'static str,
     version: &'static str,
     endpoint: String,
@@ -66,7 +66,7 @@ pub(crate) fn init_tracing(
     OtelInitGuard()
 }
 
-pub(crate) fn init_tracing_without_otel() {
+pub fn init_tracing_without_otel() {
     tracing_subscriber::Registry::default()
         .with(tracing_subscriber::fmt::Layer::new())
         .with(tracing_subscriber::filter::EnvFilter::from_default_env())
