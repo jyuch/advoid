@@ -1,5 +1,7 @@
 use opentelemetry::metrics::MeterProvider;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::Config;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -39,7 +41,7 @@ pub fn init_tracing(
                 .with_endpoint(endpoint.clone()),
         )
         .with_trace_config(
-            opentelemetry_sdk::trace::config()
+            Config::default()
                 .with_sampler(Sampler::AlwaysOn)
                 .with_id_generator(RandomIdGenerator::default())
                 .with_resource(opentelemetry_sdk::Resource::new(vec![
@@ -49,7 +51,8 @@ pub fn init_tracing(
         )
         .install_batch(opentelemetry_sdk::runtime::Tokio)
         // .install_simple()
-        .expect("Not running in tokio runtime");
+        .expect("Not running in tokio runtime")
+        .tracer(version);
 
     // Compatible layer with tracing.
     let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
