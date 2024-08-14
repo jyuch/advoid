@@ -236,6 +236,7 @@ async fn send_response<'a, R: ResponseHandler>(
     mut response_handle: R,
 ) -> io::Result<ResponseInfo> {
     if let Some(mut resp_edns) = response_edns {
+        /*
         #[cfg(feature = "dnssec")]
         {
             // set edns DAU and DHU
@@ -252,6 +253,7 @@ async fn send_response<'a, R: ResponseHandler>(
             resp_edns.options_mut().insert(dau);
             resp_edns.options_mut().insert(dhu);
         }
+        */
         response.set_edns(resp_edns);
     }
 
