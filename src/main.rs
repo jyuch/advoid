@@ -3,12 +3,8 @@ use clap::Parser;
 use hickory_client::client::AsyncClient;
 use hickory_client::udp::UdpClientStream;
 use hickory_server::ServerFuture;
-use rustc_hash::FxHashSet;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
@@ -26,9 +22,9 @@ struct Cli {
     #[clap(long)]
     exporter: SocketAddr,
 
-    /// Block file path
+    /// Block file path or url
     #[clap(long)]
-    block: PathBuf,
+    block: String,
 
     /// OTel endpoint
     #[clap(long)]
@@ -48,22 +44,13 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let mut block_list_file = File::open(opt.block).await?;
-    let mut buf = String::new();
-    let _ = block_list_file.read_to_string(&mut buf).await?;
-    let blacklist: FxHashSet<String> = buf
-        .lines()
-        .map(|it| it.trim().to_string())
-        .filter(|it| !it.is_empty())
-        .filter(|it| !it.starts_with('#'))
-        .map(|it| format!("{}.", it))
-        .collect();
+    let blocklist = advoid::blocklist::get(opt.block).await?;
 
     let conn = UdpClientStream::<UdpSocket>::new(opt.upstream);
     let (upstream, background) = AsyncClient::connect(conn).await?;
     let _handle = tokio::spawn(background);
 
-    let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blacklist);
+    let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blocklist);
 
     let socket = UdpSocket::bind(&opt.bind).await?;
     let mut server = ServerFuture::new(handler);
