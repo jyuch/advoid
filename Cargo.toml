@@ -36,7 +36,7 @@ features = ["full"]
 version = "0.7"
 
 [dependencies.tower-http]
-version = "0.5"
+version = "0.6"
 features = ["add-extension"]
 
 [dependencies.tracing]
@@ -46,7 +46,7 @@ version = "0.1"
 version = "0.2"
 
 [dependencies.tracing-opentelemetry]
-version = "0.26"
+version = "0.27"
 default-features = false
 features = ["tracing-log", "metrics"]
 
@@ -55,25 +55,25 @@ version = "0.3"
 features = ["std", "env-filter", "time", "local-time"]
 
 [dependencies.opentelemetry]
-version = "0.25"
+version = "0.26"
 default-features = false
 features = ["trace", "metrics"]
 
 [dependencies.opentelemetry_sdk]
-version = "0.25"
+version = "0.26"
 features = ["rt-tokio"]
 
 [dependencies.opentelemetry-otlp]
-version = "0.25"
+version = "0.26"
 default-features = false
 features = ["grpc-tonic", "trace", "metrics"]
 
 [dependencies.metrics]
-version = "0.23"
+version = "0.24"
 default-features = false
 
 [dependencies.metrics-exporter-prometheus]
-version = "0.15"
+version = "0.16"
 default-features = false
 
 [profile.release]
