@@ -33,7 +33,7 @@ version = "1"
 features = ["full"]
 
 [dependencies.axum]
-version = "0.7"
+version = "0.8"
 
 [dependencies.tower-http]
 version = "0.6"
