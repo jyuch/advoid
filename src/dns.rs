@@ -143,12 +143,25 @@ impl StubRequestHandler {
 
 #[async_trait::async_trait]
 impl RequestHandler for StubRequestHandler {
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(dns.src, dns.name, dns.query_class, dns.query_type, dns.op_code, dns.response_code))]
     async fn handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
+        {
+            let src = request.src().to_string();
+            tracing::Span::current().record("dns.src", &src);
+            let name = request.query().name().to_string();
+            tracing::Span::current().record("dns.name", &name);
+            let query_class = request.query().query_class().to_string();
+            tracing::Span::current().record("dns.query_class", &query_class);
+            let query_type = request.query().query_type().to_string();
+            tracing::Span::current().record("dns.query_type", &query_type);
+            let op_code = request.op_code().to_string();
+            tracing::Span::current().record("dns.op_code", &op_code);
+        }
+
         metrics::counter!("dns_requests_total").increment(1);
 
         // check if it's edns
@@ -212,12 +225,21 @@ impl RequestHandler for StubRequestHandler {
             }
         };
 
-        result.unwrap_or_else(|e| {
-            error!("request failed: {}", e);
-            let mut header = Header::new();
-            header.set_response_code(ResponseCode::ServFail);
-            header.into()
-        })
+        match result {
+            Ok(response_info) => {
+                let response_code = response_info.response_code().to_string();
+                tracing::Span::current().record("dns.response_code", &response_code);
+                response_info
+            }
+            Err(e) => {
+                error!("request failed: {}", e);
+                tracing::Span::current()
+                    .record("dns.response_code", ResponseCode::ServFail.to_string());
+                let mut header = Header::new();
+                header.set_response_code(ResponseCode::ServFail);
+                header.into()
+            }
+        }
     }
 }
 
