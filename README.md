@@ -40,7 +40,7 @@ By the way, some websites that publish ad blocker apps also provide definition f
 .\advoid.exe `
     --bind 192.168.2.32:53 `
     --upstream 1.1.1.1:53 `
-    --console 192.168.2.32:3000 `
+    --exporter 192.168.2.32:3000 `
     --block 'C:\path\to\block\list\file.txt' `
     --otel http://localhost:4317
 ```
