@@ -1,6 +1,7 @@
-use hickory_client::client::{AsyncClient, ClientHandle};
-use hickory_client::op::{DnsResponse, Edns, Header, MessageType, OpCode, ResponseCode};
-use hickory_client::rr::{DNSClass, IntoName, Name, Record, RecordType};
+use hickory_client::client::{Client, ClientHandle};
+use hickory_proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
+use hickory_proto::rr::{DNSClass, IntoName, Name, Record, RecordType};
+use hickory_proto::xfer::DnsResponse;
 use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use rustc_hash::FxHashSet;
@@ -24,13 +25,13 @@ impl CheckedDomain {
 }
 
 pub struct StubRequestHandler {
-    upstream: Arc<Mutex<AsyncClient>>,
+    upstream: Arc<Mutex<Client>>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
 }
 
 impl StubRequestHandler {
-    pub fn new(upstream: Arc<Mutex<AsyncClient>>, blacklist: FxHashSet<String>) -> Self {
+    pub fn new(upstream: Arc<Mutex<Client>>, blacklist: FxHashSet<String>) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
@@ -82,9 +83,11 @@ impl StubRequestHandler {
         request: &Request,
         response_handle: R,
     ) -> anyhow::Result<ResponseInfo> {
-        let name = request.query().name().into_name()?;
-        let class = request.query().query_class();
-        let tpe = request.query().query_type();
+        let request_info = request.request_info()?;
+
+        let name = request_info.query.name().into_name()?;
+        let class = request_info.query.query_class();
+        let tpe = request_info.query.query_type();
 
         let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
             debug!("Bypassing upstream query {}", &name.to_string());
@@ -149,87 +152,99 @@ impl RequestHandler for StubRequestHandler {
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
-        {
-            let src = request.src().to_string();
-            tracing::Span::current().record("dns.src", &src);
-            let name = request.query().name().to_string();
-            tracing::Span::current().record("dns.name", &name);
-            let query_class = request.query().query_class().to_string();
-            tracing::Span::current().record("dns.query_class", &query_class);
-            let query_type = request.query().query_type().to_string();
-            tracing::Span::current().record("dns.query_type", &query_type);
-            let op_code = request.op_code().to_string();
-            tracing::Span::current().record("dns.op_code", &op_code);
-        }
-
-        metrics::counter!("dns_requests_total").increment(1);
-
-        // check if it's edns
-        let response_edns = if let Some(req_edns) = request.edns() {
-            let mut response = MessageResponseBuilder::from_message_request(request);
-            let mut response_header = Header::response_from_request(request.header());
-
-            let mut resp_edns: Edns = Edns::new();
-
-            // check our version against the request
-            // TODO: what version are we?
-            let our_version = 0;
-            resp_edns.set_dnssec_ok(true);
-            resp_edns.set_max_payload(req_edns.max_payload().max(512));
-            resp_edns.set_version(our_version);
-
-            if req_edns.version() > our_version {
-                warn!(
-                    "request edns version greater than {}: {}",
-                    our_version,
-                    req_edns.version()
-                );
-                response_header.set_response_code(ResponseCode::BADVERS);
-                resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
-                response.edns(resp_edns);
-
-                // TODO: should ResponseHandle consume self?
-                let result = response_handle
-                    .send_response(response.build_no_records(response_header))
-                    .await;
-
-                // couldn't handle the request
-                return result.unwrap_or_else(|e| {
-                    error!("request error: {}", e);
-                    let mut header = Header::new();
-                    header.set_response_code(ResponseCode::ServFail);
-                    header.into()
-                });
-            }
-
-            Some(resp_edns)
-        } else {
-            None
-        };
-
-        let result = match request.message_type() {
-            MessageType::Query => match request.op_code() {
-                OpCode::Query => {
-                    self.handle_query(response_edns, request, response_handle)
-                        .await
+        match request.request_info() {
+            Ok(request_info) => {
+                {
+                    let src = request_info.src.to_string();
+                    tracing::Span::current().record("dns.src", &src);
+                    let name = request_info.query.name();
+                    tracing::Span::current().record("dns.name", name.to_string());
+                    let query_class = request_info.query.query_class().to_string();
+                    tracing::Span::current().record("dns.query_class", &query_class);
+                    let query_type = request_info.query.query_type().to_string();
+                    tracing::Span::current().record("dns.query_type", &query_type);
+                    let op_code = request_info.header.op_code();
+                    tracing::Span::current().record("dns.op_code", op_code.to_string());
                 }
-                c => {
-                    warn!("unimplemented op_code: {:?}", c);
-                    self.server_not_implement(response_edns, request, response_handle)
-                        .await
-                }
-            },
-            MessageType::Response => {
-                self.server_not_implement(response_edns, request, response_handle)
-                    .await
-            }
-        };
 
-        match result {
-            Ok(response_info) => {
-                let response_code = response_info.response_code().to_string();
-                tracing::Span::current().record("dns.response_code", &response_code);
-                response_info
+                metrics::counter!("dns_requests_total").increment(1);
+
+                // check if it's edns
+                let response_edns = if let Some(req_edns) = request.edns() {
+                    let mut response = MessageResponseBuilder::from_message_request(request);
+                    let mut response_header = Header::response_from_request(request.header());
+
+                    let mut resp_edns: Edns = Edns::new();
+
+                    // check our version against the request
+                    // TODO: what version are we?
+                    let our_version = 0;
+                    resp_edns.set_dnssec_ok(true);
+                    resp_edns.set_max_payload(req_edns.max_payload().max(512));
+                    resp_edns.set_version(our_version);
+
+                    if req_edns.version() > our_version {
+                        warn!(
+                            "request edns version greater than {}: {}",
+                            our_version,
+                            req_edns.version()
+                        );
+                        response_header.set_response_code(ResponseCode::BADVERS);
+                        resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
+                        response.edns(resp_edns);
+
+                        // TODO: should ResponseHandle consume self?
+                        let result = response_handle
+                            .send_response(response.build_no_records(response_header))
+                            .await;
+
+                        // couldn't handle the request
+                        return result.unwrap_or_else(|e| {
+                            error!("request error: {}", e);
+                            let mut header = Header::new();
+                            header.set_response_code(ResponseCode::ServFail);
+                            header.into()
+                        });
+                    }
+
+                    Some(resp_edns)
+                } else {
+                    None
+                };
+
+                let result = match request.message_type() {
+                    MessageType::Query => match request.op_code() {
+                        OpCode::Query => {
+                            self.handle_query(response_edns, request, response_handle)
+                                .await
+                        }
+                        c => {
+                            warn!("unimplemented op_code: {:?}", c);
+                            self.server_not_implement(response_edns, request, response_handle)
+                                .await
+                        }
+                    },
+                    MessageType::Response => {
+                        self.server_not_implement(response_edns, request, response_handle)
+                            .await
+                    }
+                };
+
+                match result {
+                    Ok(response_info) => {
+                        let response_code = response_info.response_code().to_string();
+                        tracing::Span::current().record("dns.response_code", &response_code);
+                        response_info
+                    }
+                    Err(e) => {
+                        error!("request failed: {}", e);
+                        tracing::Span::current()
+                            .record("dns.response_code", ResponseCode::ServFail.to_string());
+                        let mut header = Header::new();
+                        header.set_response_code(ResponseCode::ServFail);
+                        header.into()
+                    }
+                }
             }
             Err(e) => {
                 error!("request failed: {}", e);

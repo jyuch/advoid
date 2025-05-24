@@ -1,7 +1,8 @@
 use advoid::dns::StubRequestHandler;
 use clap::Parser;
-use hickory_client::client::AsyncClient;
-use hickory_client::udp::UdpClientStream;
+use hickory_client::client::Client;
+use hickory_proto::runtime::TokioRuntimeProvider;
+use hickory_proto::udp::UdpClientStream;
 use hickory_server::ServerFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -46,8 +47,8 @@ async fn main() -> anyhow::Result<()> {
 
     let blocklist = advoid::blocklist::get(opt.block).await?;
 
-    let conn = UdpClientStream::<UdpSocket>::new(opt.upstream);
-    let (upstream, background) = AsyncClient::connect(conn).await?;
+    let conn = UdpClientStream::builder(opt.upstream, TokioRuntimeProvider::new()).build();
+    let (upstream, background) = Client::connect(conn).await?;
     let _handle = tokio::spawn(background);
 
     let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blocklist);
