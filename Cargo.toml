@@ -73,7 +73,7 @@ version = "0.24"
 default-features = false
 
 [dependencies.metrics-exporter-prometheus]
-version = "0.16"
+version = "0.17"
 default-features = false
 
 [profile.release]
