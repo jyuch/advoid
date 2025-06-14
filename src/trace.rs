@@ -27,7 +27,7 @@ fn build_meter_provider(
     service: &'static str,
     version: &'static str,
     endpoint: &str,
-) -> impl MeterProvider {
+) -> impl MeterProvider + use<> {
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)

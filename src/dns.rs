@@ -90,7 +90,7 @@ impl StubRequestHandler {
         let tpe = request_info.query.query_type();
 
         let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
-            debug!("Bypassing upstream query {}", &name.to_string());
+            debug!("Bypassing upstream query {}", &name);
             metrics::counter!("dns_requests_block").increment(1);
             None
         } else {
