@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/rust:1.89.0-slim AS build
+FROM public.ecr.aws/docker/library/rust:1.90.0-slim AS build
 
 WORKDIR /app
 
@@ -15,4 +15,3 @@ RUN --mount=type=bind,source=src,target=src \
 FROM public.ecr.aws/docker/library/debian:stable-slim AS final
 COPY --from=build /bin/advoid /bin/advoid
 ENTRYPOINT ["/bin/advoid"]
-
