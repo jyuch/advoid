@@ -1,5 +1,5 @@
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::future::ready;
 use std::net::SocketAddr;

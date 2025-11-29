@@ -1,10 +1,10 @@
 use opentelemetry;
+use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry::KeyValue;
 use opentelemetry_otlp::{Protocol, WithExportConfig};
-use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::time::Duration;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
