@@ -38,7 +38,7 @@ version = "0.8"
 version = "0.1"
 
 [dependencies.tracing-opentelemetry]
-version = "0.30"
+version = "0.31"
 default-features = false
 features = ["tracing-log", "metrics"]
 
@@ -47,16 +47,16 @@ version = "0.3"
 features = ["std", "env-filter", "time", "local-time"]
 
 [dependencies.opentelemetry]
-version = "0.29"
+version = "0.30"
 default-features = false
 features = ["trace", "metrics"]
 
 [dependencies.opentelemetry_sdk]
-version = "0.29"
+version = "0.30"
 features = ["rt-tokio", "trace", "metrics"]
 
 [dependencies.opentelemetry-otlp]
-version = "0.29"
+version = "0.30"
 default-features = false
 features = ["grpc-tonic", "trace", "metrics"]
 
