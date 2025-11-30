@@ -1,3 +1,4 @@
+use crate::sink::Sink;
 use hickory_client::client::{Client, ClientHandle};
 use hickory_proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{DNSClass, IntoName, Name, Record, RecordType};
@@ -28,14 +29,20 @@ pub struct StubRequestHandler {
     upstream: Arc<Mutex<Client>>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
+    sink: Arc<Mutex<dyn Sink + Send>>,
 }
 
 impl StubRequestHandler {
-    pub fn new(upstream: Arc<Mutex<Client>>, blacklist: FxHashSet<String>) -> Self {
+    pub fn new(
+        upstream: Arc<Mutex<Client>>,
+        blacklist: FxHashSet<String>,
+        sink: Arc<Mutex<dyn Sink + Send>>,
+    ) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
             checked: Arc::new(Mutex::new(CheckedDomain::new())),
+            sink,
         }
     }
 
@@ -157,15 +164,32 @@ impl RequestHandler for StubRequestHandler {
                 {
                     let src = request_info.src.to_string();
                     tracing::Span::current().record("dns.src", &src);
-                    let name = request_info.query.name();
-                    tracing::Span::current().record("dns.name", name.to_string());
+                    let name = request_info.query.name().to_string();
+                    tracing::Span::current().record("dns.name", &name);
                     let query_class = request_info.query.query_class().to_string();
                     tracing::Span::current().record("dns.query_class", &query_class);
                     let query_type = request_info.query.query_type().to_string();
                     tracing::Span::current().record("dns.query_type", &query_type);
-                    let op_code = request_info.header.op_code();
-                    tracing::Span::current().record("dns.op_code", op_code.to_string());
-                }
+                    let op_code = request_info.header.op_code().to_string();
+                    tracing::Span::current().record("dns.op_code", &op_code);
+                };
+
+                let handle = {
+                    let src_ip = request_info.src.ip().to_string();
+                    let src_port = request_info.src.port();
+                    let name = request_info.query.name().to_string();
+                    let query_class = request_info.query.query_class().to_string();
+                    let query_type = request_info.query.query_type().to_string();
+                    let op_code = request_info.header.op_code().to_string();
+
+                    let sink = self.sink.clone();
+                    tokio::task::spawn(async move {
+                        sink.lock()
+                            .await
+                            .send(src_ip, src_port, name, query_class, query_type, op_code)
+                            .await
+                    })
+                };
 
                 metrics::counter!("dns_requests_total").increment(1);
 
@@ -229,6 +253,8 @@ impl RequestHandler for StubRequestHandler {
                             .await
                     }
                 };
+
+                let _ = handle.await;
 
                 match result {
                     Ok(response_info) => {

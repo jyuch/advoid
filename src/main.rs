@@ -1,5 +1,7 @@
 use advoid::dns::StubRequestHandler;
-use clap::Parser;
+use advoid::sink::{S3Sink, Sink, StubSink};
+use aws_config::BehaviorVersion;
+use clap::{Parser, ValueEnum};
 use hickory_client::client::Client;
 use hickory_proto::runtime::TokioRuntimeProvider;
 use hickory_proto::udp::UdpClientStream;
@@ -8,6 +10,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
+
+#[derive(ValueEnum, Debug, Clone)]
+enum SinkMode {
+    S3,
+}
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -30,6 +37,18 @@ struct Cli {
     /// OTel endpoint
     #[clap(long)]
     otel: Option<String>,
+
+    /// Sink mode
+    #[clap(long)]
+    sink: Option<SinkMode>,
+
+    /// S3 bucket
+    #[clap(long, required_if_eq("sink", "s3"))]
+    s3_bucket: Option<String>,
+
+    /// S3 prefix
+    #[clap(long)]
+    s3_prefix: Option<String>,
 }
 
 #[tokio::main]
@@ -45,13 +64,26 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    let sink: Arc<Mutex<dyn Sink + Send>> = match opt.sink {
+        Some(SinkMode::S3) => {
+            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let client = aws_sdk_s3::Client::new(&config);
+            Arc::new(Mutex::new(S3Sink::new(
+                client,
+                opt.s3_bucket.unwrap(/* Guard by clap required_if_eq */),
+                opt.s3_prefix,
+            )))
+        }
+        None => Arc::new(Mutex::new(StubSink {})),
+    };
+
     let blocklist = advoid::blocklist::get(opt.block).await?;
 
     let conn = UdpClientStream::builder(opt.upstream, TokioRuntimeProvider::new()).build();
     let (upstream, background) = Client::connect(conn).await?;
     let _handle = tokio::spawn(background);
 
-    let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blocklist);
+    let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blocklist, sink);
 
     let socket = UdpSocket::bind(&opt.bind).await?;
     let mut server = ServerFuture::new(handler);
