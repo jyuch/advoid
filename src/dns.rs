@@ -1,4 +1,4 @@
-use crate::sink::Sink;
+use crate::event::Sink;
 use hickory_client::client::{Client, ClientHandle};
 use hickory_proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{DNSClass, IntoName, Name, Record, RecordType};
@@ -29,14 +29,14 @@ pub struct StubRequestHandler {
     upstream: Arc<Mutex<Client>>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
-    sink: Arc<Mutex<dyn Sink + Send>>,
+    sink: Arc<dyn Sink + Sync + Send>,
 }
 
 impl StubRequestHandler {
     pub fn new(
         upstream: Arc<Mutex<Client>>,
         blacklist: FxHashSet<String>,
-        sink: Arc<Mutex<dyn Sink + Send>>,
+        sink: Arc<dyn Sink + Sync + Send>,
     ) -> Self {
         StubRequestHandler {
             upstream,
@@ -174,7 +174,7 @@ impl RequestHandler for StubRequestHandler {
                     tracing::Span::current().record("dns.op_code", &op_code);
                 };
 
-                let handle = {
+                {
                     let src_ip = request_info.src.ip().to_string();
                     let src_port = request_info.src.port();
                     let name = request_info.query.name().to_string();
@@ -182,13 +182,9 @@ impl RequestHandler for StubRequestHandler {
                     let query_type = request_info.query.query_type().to_string();
                     let op_code = request_info.header.op_code().to_string();
 
-                    let sink = self.sink.clone();
-                    tokio::task::spawn(async move {
-                        sink.lock()
-                            .await
-                            .send(src_ip, src_port, name, query_class, query_type, op_code)
-                            .await
-                    })
+                    self.sink
+                        .send(src_ip, src_port, name, query_class, query_type, op_code)
+                        .await;
                 };
 
                 metrics::counter!("dns_requests_total").increment(1);
@@ -253,8 +249,6 @@ impl RequestHandler for StubRequestHandler {
                             .await
                     }
                 };
-
-                let _ = handle.await;
 
                 match result {
                     Ok(response_info) => {

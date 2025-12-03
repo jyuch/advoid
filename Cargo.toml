@@ -19,6 +19,10 @@ features = ["derive"]
 [dependencies.serde_json]
 version = "1"
 
+[dependencies.uuid]
+version = "1"
+features = ["v7", "serde"]
+
 [dependencies.aws-config]
 version = "1"
 
