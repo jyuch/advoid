@@ -143,7 +143,7 @@ fn key(prefix: Option<&String>, occur: DateTime<Utc>, tpe: &str) -> String {
     match prefix {
         Some(prefix) => {
             format!(
-                "{}/{}/date={}/{}.json",
+                "{}/{}/{}/{}.json",
                 prefix,
                 tpe,
                 occur.format("%Y-%m-%d"),
@@ -152,7 +152,7 @@ fn key(prefix: Option<&String>, occur: DateTime<Utc>, tpe: &str) -> String {
         }
         None => {
             format!(
-                "date={}/{}/{}.json",
+                "{}/{}/{}.json",
                 tpe,
                 occur.format("%Y-%m-%d"),
                 occur.format("%Y%m%d%H%M%S")
