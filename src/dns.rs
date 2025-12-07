@@ -174,7 +174,7 @@ impl RequestHandler for StubRequestHandler {
                     tracing::Span::current().record("dns.op_code", &op_code);
                 };
 
-                let _event_id = {
+                let event_id = {
                     let src_ip = request_info.src.ip().to_string();
                     let src_port = request_info.src.port();
                     let name = request_info.query.name().to_string();
@@ -184,7 +184,7 @@ impl RequestHandler for StubRequestHandler {
 
                     self.sink
                         .request(src_ip, src_port, name, query_class, query_type, op_code)
-                        .await;
+                        .await
                 };
 
                 metrics::counter!("dns_requests_total").increment(1);
@@ -254,12 +254,16 @@ impl RequestHandler for StubRequestHandler {
                     Ok(response_info) => {
                         let response_code = response_info.response_code().to_string();
                         tracing::Span::current().record("dns.response_code", &response_code);
+                        self.sink.response(event_id, response_code).await;
                         response_info
                     }
                     Err(e) => {
                         error!("request failed: {}", e);
                         tracing::Span::current()
                             .record("dns.response_code", ResponseCode::ServFail.to_string());
+                        self.sink
+                            .response(event_id, ResponseCode::ServFail.to_string())
+                            .await;
                         let mut header = Header::new();
                         header.set_response_code(ResponseCode::ServFail);
                         header.into()

@@ -64,20 +64,32 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let (sink, _worker_handle): (Arc<dyn Sink + Sync + Send>, _) = match opt.sink {
+    let (sink, _request_worker_handle, _response_worker_handle): (
+        Arc<dyn Sink + Sync + Send>,
+        _,
+        _,
+    ) = match opt.sink {
         Some(SinkMode::S3) => {
             let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
             let client = aws_sdk_s3::Client::new(&config);
-            let (sink, worker) = S3Sink::new(
+            let (sink, request_worker, response_worker) = S3Sink::new(
                 client,
                 opt.s3_bucket.unwrap(/* Guard by clap required_if_eq */),
                 opt.s3_prefix,
             );
-            (Arc::new(sink), tokio::spawn(worker))
+            (
+                Arc::new(sink),
+                tokio::spawn(request_worker),
+                tokio::spawn(response_worker),
+            )
         }
         None => {
-            let (sink, worker) = StubSink::new();
-            (Arc::new(sink), tokio::spawn(worker))
+            let (sink, request_worker, response_worker) = StubSink::new();
+            (
+                Arc::new(sink),
+                tokio::spawn(request_worker),
+                tokio::spawn(response_worker),
+            )
         }
     };
 
