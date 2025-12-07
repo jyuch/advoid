@@ -174,7 +174,7 @@ impl RequestHandler for StubRequestHandler {
                     tracing::Span::current().record("dns.op_code", &op_code);
                 };
 
-                {
+                let _event_id = {
                     let src_ip = request_info.src.ip().to_string();
                     let src_port = request_info.src.port();
                     let name = request_info.query.name().to_string();
@@ -183,7 +183,7 @@ impl RequestHandler for StubRequestHandler {
                     let op_code = request_info.header.op_code().to_string();
 
                     self.sink
-                        .send(src_ip, src_port, name, query_class, query_type, op_code)
+                        .request(src_ip, src_port, name, query_class, query_type, op_code)
                         .await;
                 };
 

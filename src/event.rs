@@ -9,7 +9,7 @@ use tracing::error;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Receive {
+pub struct Request {
     id: Uuid,
     occur: DateTime<Utc>,
     src_ip: String,
@@ -22,7 +22,7 @@ pub struct Receive {
 
 #[async_trait::async_trait]
 pub trait Sink {
-    async fn send(
+    async fn request(
         &self,
         src_ip: String,
         src_port: u16,
@@ -30,11 +30,11 @@ pub trait Sink {
         query_class: String,
         query_type: String,
         op_code: String,
-    );
+    ) -> Uuid;
 }
 
 pub struct S3Sink {
-    tx: UnboundedSender<Receive>,
+    tx: UnboundedSender<Request>,
 }
 
 impl S3Sink {
@@ -61,7 +61,7 @@ impl S3Sink {
                     }
                 }
 
-                let key = key(prefix.as_ref(), Utc::now(), "receive");
+                let key = key(prefix.as_ref(), Utc::now(), "request");
                 let body = ByteStream::from(json_buffer);
 
                 let result = client
@@ -73,7 +73,7 @@ impl S3Sink {
                     .await;
 
                 if let Err(e) = result {
-                    error!("error sending receive event: {:?}", e);
+                    error!("error sending request event: {:?}", e);
                 }
 
                 event_buffer.clear();
@@ -88,7 +88,7 @@ impl S3Sink {
 
 #[async_trait::async_trait]
 impl Sink for S3Sink {
-    async fn send(
+    async fn request(
         &self,
         src_ip: String,
         src_port: u16,
@@ -96,9 +96,11 @@ impl Sink for S3Sink {
         query_class: String,
         query_type: String,
         op_code: String,
-    ) {
-        let event = Receive {
-            id: Uuid::now_v7(),
+    ) -> Uuid {
+        let id = Uuid::now_v7();
+
+        let event = Request {
+            id: id,
             occur: Utc::now(),
             src_ip,
             src_port,
@@ -113,6 +115,8 @@ impl Sink for S3Sink {
         if let Err(e) = result {
             error!("error sending event: {:?}", e);
         }
+
+        id
     }
 }
 
@@ -126,7 +130,7 @@ impl StubSink {
 
 #[async_trait::async_trait]
 impl Sink for StubSink {
-    async fn send(
+    async fn request(
         &self,
         _src_ip: String,
         _src_port: u16,
@@ -134,8 +138,8 @@ impl Sink for StubSink {
         _query_class: String,
         _query_type: String,
         _op_code: String,
-    ) {
-        /* Nothing to do. */
+    ) -> Uuid {
+        Uuid::default()
     }
 }
 
