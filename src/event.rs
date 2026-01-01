@@ -11,6 +11,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
 
+const NEWLINE: &str = "\n";
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Request {
     id: Uuid,
@@ -207,6 +209,7 @@ where
                 match serde_json::to_string(it) {
                     Ok(json) => {
                         let _ = json_buffer.write(json.as_ref());
+                        let _ = json_buffer.write(NEWLINE.as_ref());
                     }
                     Err(e) => {
                         error!("Error serializing event to JSON: {:?}", e);
@@ -228,8 +231,6 @@ where
             if let Err(e) = result {
                 error!("error sending request event: {:?}", e);
             }
-
-            println!("{}", event_buffer.len());
 
             event_buffer.clear();
 
