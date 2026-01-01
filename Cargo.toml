@@ -52,6 +52,9 @@ features = ["derive"]
 version = "1"
 features = ["full"]
 
+[dependencies.tokio-util]
+version = "0.7"
+
 [dependencies.axum]
 version = "0.8"
 

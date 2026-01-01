@@ -9,7 +9,10 @@ use hickory_server::ServerFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::signal;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 #[derive(ValueEnum, Debug, Clone)]
 enum SinkMode {
@@ -49,13 +52,21 @@ struct Cli {
     /// S3 prefix
     #[clap(long)]
     s3_prefix: Option<String>,
+
+    /// Event sink interval
+    #[clap(long, default_value_t = 1)]
+    sink_interval: u64,
+
+    /// Event sink batch size
+    #[clap(long, default_value_t = 1000)]
+    sink_batch_size: usize,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opt = Cli::parse();
 
-    let _guard = if let Some(otel) = opt.otel {
+    let _otel = if let Some(otel) = opt.otel {
         let service = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");
         Some(advoid::trace::init_tracing(service, version, otel))
@@ -63,6 +74,8 @@ async fn main() -> anyhow::Result<()> {
         advoid::trace::init_tracing_without_otel();
         None
     };
+
+    let worker_cancellation_token = CancellationToken::new();
 
     let (sink, _request_worker_handle, _response_worker_handle): (
         Arc<dyn Sink + Sync + Send>,
@@ -76,6 +89,9 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 opt.s3_bucket.unwrap(/* Guard by clap required_if_eq */),
                 opt.s3_prefix,
+                opt.sink_interval,
+                opt.sink_batch_size,
+                worker_cancellation_token.clone(),
             );
             (
                 Arc::new(sink),
@@ -104,12 +120,29 @@ async fn main() -> anyhow::Result<()> {
     let socket = UdpSocket::bind(&opt.bind).await?;
     let mut server = ServerFuture::new(handler);
     server.register_socket(socket);
+    let server_cancellation_token = server.shutdown_token().clone();
 
-    tokio::spawn(async move {
+    let server_handle = tokio::spawn(async move {
         let _ = server.block_until_done().await;
     });
 
-    advoid::metrics::start_metrics_server(opt.exporter).await?;
+    tokio::spawn(async move {
+        let _ = advoid::metrics::start_metrics_server(opt.exporter).await;
+    });
+
+    match signal::ctrl_c().await {
+        Ok(()) => {}
+        Err(err) => {
+            error!("Unable to listen for shutdown signal: {}", err);
+        }
+    }
+
+    server_cancellation_token.cancel();
+    let _ = server_handle.await;
+
+    worker_cancellation_token.cancel();
+    let _ = _request_worker_handle.await;
+    let _ = _response_worker_handle.await;
 
     Ok(())
 }

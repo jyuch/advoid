@@ -4,8 +4,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::time::Duration;
+use tokio::select;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
 
@@ -53,11 +55,28 @@ impl S3Sink {
         client: Client,
         bucket: String,
         prefix: Option<String>,
+        sink_interval: u64,
+        sink_batch_size: usize,
+        cancellation_token: CancellationToken,
     ) -> (S3Sink, impl Future<Output = ()>, impl Future<Output = ()>) {
-        let (request_tx, request_worker) =
-            initialize_worker::<Request>(client.clone(), bucket.clone(), prefix.clone(), "request");
-        let (response_tx, response_worker) =
-            initialize_worker::<Response>(client, bucket, prefix, "response");
+        let (request_tx, request_worker) = initialize_worker::<Request>(
+            client.clone(),
+            bucket.clone(),
+            prefix.clone(),
+            "request",
+            sink_interval,
+            sink_batch_size,
+            cancellation_token.clone(),
+        );
+        let (response_tx, response_worker) = initialize_worker::<Response>(
+            client,
+            bucket,
+            prefix,
+            "response",
+            sink_interval,
+            sink_batch_size,
+            cancellation_token.clone(),
+        );
 
         let sink = S3Sink {
             request_tx,
@@ -170,15 +189,18 @@ fn initialize_worker<T>(
     bucket: String,
     prefix: Option<String>,
     event_type: &str,
+    sink_interval: u64,
+    sink_batch_size: usize,
+    cancellation_token: CancellationToken,
 ) -> (UnboundedSender<T>, impl Future<Output = ()>)
 where
     T: Serialize,
 {
     let (tx, mut rx) = unbounded_channel();
     let worker = async move {
-        let mut event_buffer = Vec::with_capacity(1000);
+        let mut event_buffer = Vec::with_capacity(sink_batch_size);
 
-        while rx.recv_many(&mut event_buffer, 1000).await != 0 {
+        while rx.recv_many(&mut event_buffer, sink_batch_size).await != 0 {
             let mut json_buffer = Vec::new();
 
             for it in &event_buffer {
@@ -207,8 +229,18 @@ where
                 error!("error sending request event: {:?}", e);
             }
 
+            println!("{}", event_buffer.len());
+
             event_buffer.clear();
-            sleep(Duration::from_secs(1)).await;
+
+            select! {
+                _ = sleep(Duration::from_secs(sink_interval)) => {  },
+                _ = cancellation_token.cancelled() => {  }
+            }
+
+            if rx.is_empty() && cancellation_token.is_cancelled() {
+                break;
+            }
         }
     };
 
