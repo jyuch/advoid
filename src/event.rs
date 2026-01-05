@@ -165,6 +165,7 @@ impl Sink for StubSink {
 }
 
 fn key(prefix: Option<&String>, occur: DateTime<Utc>, event_type: &str) -> String {
+    let id = Uuid::now_v7();
     match prefix {
         Some(prefix) => {
             format!(
@@ -172,16 +173,11 @@ fn key(prefix: Option<&String>, occur: DateTime<Utc>, event_type: &str) -> Strin
                 prefix,
                 event_type,
                 occur.format("%Y-%m-%d"),
-                occur.format("%Y%m%d%H%M%S")
+                id,
             )
         }
         None => {
-            format!(
-                "{}/{}/{}.json",
-                event_type,
-                occur.format("%Y-%m-%d"),
-                occur.format("%Y%m%d%H%M%S")
-            )
+            format!("{}/{}/{}.json", event_type, occur.format("%Y-%m-%d"), id,)
         }
     }
 }
