@@ -28,6 +28,13 @@ cargo run -- --bind 127.0.0.1:53 --upstream 1.1.1.1:53 --exporter 127.0.0.1:3000
 # Run with Databricks event sink
 cargo run -- --bind 127.0.0.1:53 --upstream 1.1.1.1:53 --exporter 127.0.0.1:3000 --block path/to/blocklist.txt --sink databricks --databricks-host https://workspace.cloud.databricks.com --databricks-client-id <client-id> --databricks-client-secret <secret> --databricks-volume-path /Volumes/catalog/schema/volume
 
+# Run with Databricks sink using environment variables (recommended for security)
+export DATABRICKS_HOST=https://workspace.cloud.databricks.com
+export DATABRICKS_CLIENT_ID=<client-id>
+export DATABRICKS_CLIENT_SECRET=<secret>
+export DATABRICKS_VOLUME_PATH=/Volumes/catalog/schema/volume
+cargo run -- --bind 127.0.0.1:53 --upstream 1.1.1.1:53 --exporter 127.0.0.1:3000 --block path/to/blocklist.txt --sink databricks
+
 # Run with OpenTelemetry tracing
 cargo run -- --bind 127.0.0.1:53 --upstream 1.1.1.1:53 --exporter 127.0.0.1:3000 --block path/to/blocklist.txt --otel http://localhost:4317
 ```
@@ -39,6 +46,15 @@ docker build -t advoid .
 
 # Run container
 docker run -p 53:53/udp -p 3000:3000 advoid --bind 0.0.0.0:53 --upstream 1.1.1.1:53 --exporter 0.0.0.0:3000 --block /path/to/blocklist.txt
+
+# Run with Databricks sink using environment variables
+docker run \
+  -e DATABRICKS_HOST=https://workspace.cloud.databricks.com \
+  -e DATABRICKS_CLIENT_ID=<client-id> \
+  -e DATABRICKS_CLIENT_SECRET=<secret> \
+  -e DATABRICKS_VOLUME_PATH=/Volumes/catalog/schema/volume \
+  -p 53:53/udp -p 3000:3000 \
+  advoid --bind 0.0.0.0:53 --upstream 1.1.1.1:53 --exporter 0.0.0.0:3000 --block /path/to/blocklist.txt --sink databricks
 ```
 
 ### Testing
@@ -111,3 +127,15 @@ cargo test
 - The S3 and Databricks sinks create separate worker tasks for request and response events
 - UUIDv7 is used for event IDs to maintain time-ordering
 - The release profile enables aggressive optimization: LTO, single codegen unit, and binary stripping
+
+### Credential Management
+
+Databricks credentials can be provided via command-line arguments or environment variables:
+- `DATABRICKS_HOST` - Workspace URL
+- `DATABRICKS_CLIENT_ID` - Service principal client ID
+- `DATABRICKS_CLIENT_SECRET` - Service principal client secret
+- `DATABRICKS_VOLUME_PATH` - Volume path for event storage
+
+**Security Best Practice**: Use environment variables for credentials instead of CLI arguments. CLI arguments are visible in process lists and shell history, while environment variables provide better security isolation.
+
+Command-line arguments take precedence over environment variables when both are provided.

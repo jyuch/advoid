@@ -55,19 +55,19 @@ struct Cli {
     s3_prefix: Option<String>,
 
     /// Databricks workspace URL
-    #[clap(long, required_if_eq("sink", "databricks"))]
+    #[clap(long, env = "DATABRICKS_HOST", required_if_eq("sink", "databricks"))]
     databricks_host: Option<String>,
 
     /// Databricks service principal client ID
-    #[clap(long, required_if_eq("sink", "databricks"))]
+    #[clap(long, env = "DATABRICKS_CLIENT_ID", required_if_eq("sink", "databricks"))]
     databricks_client_id: Option<String>,
 
     /// Databricks service principal client secret
-    #[clap(long, required_if_eq("sink", "databricks"))]
+    #[clap(long, env = "DATABRICKS_CLIENT_SECRET", required_if_eq("sink", "databricks"))]
     databricks_client_secret: Option<String>,
 
     /// Databricks volume path (e.g., /Volumes/catalog/schema/volume_name)
-    #[clap(long, required_if_eq("sink", "databricks"))]
+    #[clap(long, env = "DATABRICKS_VOLUME_PATH", required_if_eq("sink", "databricks"))]
     databricks_volume_path: Option<String>,
 
     /// Event sink interval

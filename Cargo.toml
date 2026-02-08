@@ -46,7 +46,7 @@ default-features = false
 
 [dependencies.clap]
 version = "4"
-features = ["derive"]
+features = ["derive", "env"]
 
 [dependencies.tokio]
 version = "1"
