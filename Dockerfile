@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/rust:1.92.0-slim AS build
+FROM public.ecr.aws/docker/library/rust:1.93.0-slim AS build
 
 WORKDIR /app
 
