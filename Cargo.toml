@@ -32,7 +32,7 @@ version = "1"
 [dependencies.reqwest]
 version = "0.12"
 default-features = false
-features = ["rustls-tls-webpki-roots"]
+features = ["rustls-tls-webpki-roots", "json"]
 
 [dependencies.hickory-proto]
 version = "0.25"

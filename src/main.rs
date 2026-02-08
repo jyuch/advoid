@@ -1,5 +1,5 @@
 use advoid::dns::StubRequestHandler;
-use advoid::event::{S3Sink, Sink, StubSink};
+use advoid::event::{DatabricksSink, S3Sink, Sink, StubSink};
 use aws_config::BehaviorVersion;
 use clap::{Parser, ValueEnum};
 use hickory_client::client::Client;
@@ -17,6 +17,7 @@ use tracing::error;
 #[derive(ValueEnum, Debug, Clone)]
 enum SinkMode {
     S3,
+    Databricks,
 }
 
 #[derive(Parser, Debug)]
@@ -52,6 +53,22 @@ struct Cli {
     /// S3 prefix
     #[clap(long)]
     s3_prefix: Option<String>,
+
+    /// Databricks workspace URL
+    #[clap(long, required_if_eq("sink", "databricks"))]
+    databricks_host: Option<String>,
+
+    /// Databricks service principal client ID
+    #[clap(long, required_if_eq("sink", "databricks"))]
+    databricks_client_id: Option<String>,
+
+    /// Databricks service principal client secret
+    #[clap(long, required_if_eq("sink", "databricks"))]
+    databricks_client_secret: Option<String>,
+
+    /// Databricks volume path (e.g., /Volumes/catalog/schema/volume_name)
+    #[clap(long, required_if_eq("sink", "databricks"))]
+    databricks_volume_path: Option<String>,
 
     /// Event sink interval
     #[clap(long, default_value_t = 1)]
@@ -89,6 +106,22 @@ async fn main() -> anyhow::Result<()> {
                 client,
                 opt.s3_bucket.unwrap(/* Guard by clap required_if_eq */),
                 opt.s3_prefix,
+                opt.sink_interval,
+                opt.sink_batch_size,
+                worker_cancellation_token.clone(),
+            );
+            (
+                Arc::new(sink),
+                tokio::spawn(request_worker),
+                tokio::spawn(response_worker),
+            )
+        }
+        Some(SinkMode::Databricks) => {
+            let (sink, request_worker, response_worker) = DatabricksSink::new(
+                opt.databricks_host.unwrap(/* Guard by clap required_if_eq */),
+                opt.databricks_client_id.unwrap(/* Guard by clap required_if_eq */),
+                opt.databricks_client_secret.unwrap(/* Guard by clap required_if_eq */),
+                opt.databricks_volume_path.unwrap(/* Guard by clap required_if_eq */),
                 opt.sink_interval,
                 opt.sink_batch_size,
                 worker_cancellation_token.clone(),
