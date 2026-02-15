@@ -56,7 +56,7 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 
 **`src/metrics.rs`** — Prometheus metrics server (axum, `/metrics` endpoint). Counters: `dns_requests_total`, `dns_requests_block`, `dns_requests_forward`.
 
-**`src/trace.rs`** — Optional OpenTelemetry tracing via `--otel`. Falls back to stdout logging. `OtelInitGuard` ensures proper shutdown.
+**`src/trace.rs`** — Optional OpenTelemetry tracing via `--otel`. Falls back to stdout logging. `OtelInitGuard` ensures proper shutdown. Supports `--otel-api-key` (or `OTEL_API_KEY` env var) for backends requiring authentication (e.g., New Relic's `api-key` header). TLS is automatically enabled when the endpoint uses `https://`.
 
 **`src/main.rs`** — CLI (clap derive), component initialization, graceful shutdown via ctrl-c + cancellation tokens.
 
@@ -75,4 +75,5 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 - The blocklist is loaded once at startup into an `FxHashSet` and never reloaded
 - Event sinks use unbounded channels — be mindful of memory under high query loads
 - Databricks credentials support both CLI args and environment variables (`DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID`, `DATABRICKS_CLIENT_SECRET`, `DATABRICKS_VOLUME_PATH`); CLI args take precedence
+- OTel API key can be set via `--otel-api-key` or `OTEL_API_KEY` env var; HTTPS endpoints automatically get TLS configured via tonic's `ClientTlsConfig`
 - The release profile enables aggressive optimization: LTO, single codegen unit, binary stripping
