@@ -59,15 +59,27 @@ struct Cli {
     databricks_host: Option<String>,
 
     /// Databricks service principal client ID
-    #[clap(long, env = "DATABRICKS_CLIENT_ID", required_if_eq("sink", "databricks"))]
+    #[clap(
+        long,
+        env = "DATABRICKS_CLIENT_ID",
+        required_if_eq("sink", "databricks")
+    )]
     databricks_client_id: Option<String>,
 
     /// Databricks service principal client secret
-    #[clap(long, env = "DATABRICKS_CLIENT_SECRET", required_if_eq("sink", "databricks"))]
+    #[clap(
+        long,
+        env = "DATABRICKS_CLIENT_SECRET",
+        required_if_eq("sink", "databricks")
+    )]
     databricks_client_secret: Option<String>,
 
     /// Databricks volume path (e.g., /Volumes/catalog/schema/volume_name)
-    #[clap(long, env = "DATABRICKS_VOLUME_PATH", required_if_eq("sink", "databricks"))]
+    #[clap(
+        long,
+        env = "DATABRICKS_VOLUME_PATH",
+        required_if_eq("sink", "databricks")
+    )]
     databricks_volume_path: Option<String>,
 
     /// Event sink interval
@@ -77,6 +89,10 @@ struct Cli {
     /// Event sink batch size
     #[clap(long, default_value_t = 1000)]
     sink_batch_size: usize,
+
+    /// Forward PTR queries for private/local IP addresses to upstream resolver
+    #[clap(long)]
+    forward_local_zone: bool,
 }
 
 #[tokio::main]
@@ -148,7 +164,12 @@ async fn main() -> anyhow::Result<()> {
     let (upstream, background) = Client::connect(conn).await?;
     let _handle = tokio::spawn(background);
 
-    let handler = StubRequestHandler::new(Arc::new(Mutex::new(upstream)), blocklist, sink);
+    let handler = StubRequestHandler::new(
+        Arc::new(Mutex::new(upstream)),
+        blocklist,
+        sink,
+        !opt.forward_local_zone,
+    );
 
     let socket = UdpSocket::bind(&opt.bind).await?;
     let mut server = ServerFuture::new(handler);

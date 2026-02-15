@@ -11,6 +11,49 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
 
+const RFC6303_ZONES: &[&str] = &[
+    // IPv4
+    "0.in-addr.arpa.",
+    "127.in-addr.arpa.",
+    "10.in-addr.arpa.",
+    "16.172.in-addr.arpa.",
+    "17.172.in-addr.arpa.",
+    "18.172.in-addr.arpa.",
+    "19.172.in-addr.arpa.",
+    "20.172.in-addr.arpa.",
+    "21.172.in-addr.arpa.",
+    "22.172.in-addr.arpa.",
+    "23.172.in-addr.arpa.",
+    "24.172.in-addr.arpa.",
+    "25.172.in-addr.arpa.",
+    "26.172.in-addr.arpa.",
+    "27.172.in-addr.arpa.",
+    "28.172.in-addr.arpa.",
+    "29.172.in-addr.arpa.",
+    "30.172.in-addr.arpa.",
+    "31.172.in-addr.arpa.",
+    "168.192.in-addr.arpa.",
+    "254.169.in-addr.arpa.",
+    // IPv6 "this host" (::0/128)
+    "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
+    // IPv6 loopback (::1/128)
+    "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa.",
+    // IPv6 unique local (fd00::/8)
+    "d.f.ip6.arpa.",
+    // IPv6 link-local (fe80::/10)
+    "8.e.f.ip6.arpa.",
+    "9.e.f.ip6.arpa.",
+    "a.e.f.ip6.arpa.",
+    "b.e.f.ip6.arpa.",
+    // IPv6 documentation (2001:db8::/32)
+    "8.b.d.0.1.0.0.2.ip6.arpa.",
+];
+
+fn is_rfc6303_zone(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    RFC6303_ZONES.iter().any(|zone| lower.ends_with(zone))
+}
+
 struct CheckedDomain {
     block: FxHashSet<String>,
     allow: FxHashSet<String>,
@@ -30,6 +73,7 @@ pub struct StubRequestHandler {
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
     sink: Arc<dyn Sink + Sync + Send>,
+    block_local_zone: bool,
 }
 
 impl StubRequestHandler {
@@ -37,12 +81,14 @@ impl StubRequestHandler {
         upstream: Arc<Mutex<Client>>,
         blacklist: FxHashSet<String>,
         sink: Arc<dyn Sink + Sync + Send>,
+        block_local_zone: bool,
     ) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
             checked: Arc::new(Mutex::new(CheckedDomain::new())),
             sink,
+            block_local_zone,
         }
     }
 
@@ -96,7 +142,13 @@ impl StubRequestHandler {
         let class = request_info.query.query_class();
         let tpe = request_info.query.query_type();
 
-        let upstream_response = if self.is_blacklist_subdomain(&name.to_string()).await {
+        let name_str = name.to_string();
+
+        let upstream_response = if self.block_local_zone && is_rfc6303_zone(&name_str) {
+            debug!("Blocking RFC 6303 local zone query {}", &name);
+            metrics::counter!("dns_requests_block").increment(1);
+            None
+        } else if self.is_blacklist_subdomain(&name_str).await {
             debug!("Bypassing upstream query {}", &name);
             metrics::counter!("dns_requests_block").increment(1);
             None
@@ -319,4 +371,67 @@ async fn send_response<'a, R: ResponseHandler>(
     }
 
     response_handle.send_response(response).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rfc6303_ipv4_zones() {
+        // 0.0.0.0/8
+        assert!(is_rfc6303_zone("1.0.0.0.in-addr.arpa."));
+        // 127.0.0.0/8
+        assert!(is_rfc6303_zone("1.0.0.127.in-addr.arpa."));
+        // 10.0.0.0/8
+        assert!(is_rfc6303_zone("1.0.0.10.in-addr.arpa."));
+        // 172.16.0.0/12
+        assert!(is_rfc6303_zone("1.0.16.172.in-addr.arpa."));
+        assert!(is_rfc6303_zone("1.0.31.172.in-addr.arpa."));
+        // 192.168.0.0/16
+        assert!(is_rfc6303_zone("1.0.168.192.in-addr.arpa."));
+        // 169.254.0.0/16
+        assert!(is_rfc6303_zone("1.0.254.169.in-addr.arpa."));
+    }
+
+    #[test]
+    fn test_rfc6303_ipv6_zones() {
+        // ::1 loopback
+        assert!(is_rfc6303_zone(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa."
+        ));
+        // fd00::/8 unique local
+        assert!(is_rfc6303_zone(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa."
+        ));
+        // fe80::/10 link-local
+        assert!(is_rfc6303_zone(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.e.f.ip6.arpa."
+        ));
+        assert!(is_rfc6303_zone(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.b.e.f.ip6.arpa."
+        ));
+        // 2001:db8::/32 documentation
+        assert!(is_rfc6303_zone(
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa."
+        ));
+    }
+
+    #[test]
+    fn test_rfc6303_non_matching() {
+        assert!(!is_rfc6303_zone("example.com."));
+        assert!(!is_rfc6303_zone("google.com."));
+        assert!(!is_rfc6303_zone("1.0.0.8.in-addr.arpa."));
+        // 172.15 is not in the private range
+        assert!(!is_rfc6303_zone("1.0.15.172.in-addr.arpa."));
+        // 172.32 is not in the private range
+        assert!(!is_rfc6303_zone("1.0.32.172.in-addr.arpa."));
+    }
+
+    #[test]
+    fn test_rfc6303_case_insensitive() {
+        assert!(is_rfc6303_zone("1.0.0.127.IN-ADDR.ARPA."));
+        assert!(is_rfc6303_zone("1.0.0.10.In-Addr.Arpa."));
+        assert!(is_rfc6303_zone("1.0.0.0.D.F.IP6.ARPA."));
+    }
 }
