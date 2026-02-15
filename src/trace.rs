@@ -24,8 +24,8 @@ impl Drop for OtelInitGuard {
 }
 
 fn build_meter_provider(
-    service: &'static str,
-    version: &'static str,
+    service: &str,
+    version: &str,
     endpoint: &str,
     api_key: Option<String>,
 ) -> impl MeterProvider + use<> {
@@ -57,16 +57,16 @@ fn build_meter_provider(
         .with_reader(reader)
         .with_resource(
             Resource::builder()
-                .with_attribute(KeyValue::new("service.name", service))
-                .with_attribute(KeyValue::new("service.version", version))
+                .with_attribute(KeyValue::new("service.name", service.to_string()))
+                .with_attribute(KeyValue::new("service.version", version.to_string()))
                 .build(),
         )
         .build()
 }
 
 pub fn init_tracing(
-    service: &'static str,
-    version: &'static str,
+    service: &str,
+    version: &str,
     endpoint: String,
     api_key: Option<String>,
 ) -> OtelInitGuard {
@@ -94,8 +94,8 @@ pub fn init_tracing(
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(
             Resource::builder()
-                .with_attribute(KeyValue::new("service.name", service))
-                .with_attribute(KeyValue::new("service.version", version))
+                .with_attribute(KeyValue::new("service.name", service.to_string()))
+                .with_attribute(KeyValue::new("service.version", version.to_string()))
                 .build(),
         )
         .build();

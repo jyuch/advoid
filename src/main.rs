@@ -97,6 +97,14 @@ struct Cli {
     /// Forward PTR queries for private/local IP addresses to upstream resolver
     #[clap(long)]
     forward_local_zone: bool,
+
+    /// OTel service name (defaults to crate name)
+    #[clap(long)]
+    otel_service_name: Option<String>,
+
+    /// OTel service version (defaults to crate version)
+    #[clap(long)]
+    otel_service_version: Option<String>,
 }
 
 #[tokio::main]
@@ -104,11 +112,15 @@ async fn main() -> anyhow::Result<()> {
     let opt = Cli::parse();
 
     let _otel = if let Some(otel) = opt.otel {
-        let service = env!("CARGO_PKG_NAME");
-        let version = env!("CARGO_PKG_VERSION");
+        let service = opt
+            .otel_service_name
+            .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+        let version = opt
+            .otel_service_version
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
         Some(advoid::trace::init_tracing(
-            service,
-            version,
+            &service,
+            &version,
             otel,
             opt.otel_api_key,
         ))

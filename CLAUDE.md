@@ -56,7 +56,7 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 
 **`src/metrics.rs`** — Prometheus metrics server (axum, `/metrics` endpoint). Counters: `dns_requests_total`, `dns_requests_block`, `dns_requests_forward`.
 
-**`src/trace.rs`** — Optional OpenTelemetry tracing via `--otel`. Falls back to stdout logging. `OtelInitGuard` ensures proper shutdown. Supports `--otel-api-key` (or `OTEL_API_KEY` env var) for backends requiring authentication (e.g., New Relic's `api-key` header). TLS is automatically enabled when the endpoint uses `https://`.
+**`src/trace.rs`** — Optional OpenTelemetry tracing via `--otel`. Falls back to stdout logging. `OtelInitGuard` ensures proper shutdown. Supports `--otel-api-key` (or `OTEL_API_KEY` env var) for backends requiring authentication (e.g., New Relic's `api-key` header). TLS is automatically enabled when the endpoint uses `https://`. `service.name` and `service.version` default to crate metadata but can be overridden via `--otel-service-name` and `--otel-service-version`.
 
 **`src/main.rs`** — CLI (clap derive), component initialization, graceful shutdown via ctrl-c + cancellation tokens.
 
