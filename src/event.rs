@@ -296,11 +296,10 @@ impl DatabricksClient {
         let mut token_guard = self.token.write().await;
 
         // Double-check after acquiring write lock
-        if let Some(token_info) = token_guard.as_ref() {
-            if token_info.expires_at > Utc::now() + chrono::Duration::seconds(60) {
+        if let Some(token_info) = token_guard.as_ref()
+            && token_info.expires_at > Utc::now() + chrono::Duration::seconds(60) {
                 return Ok(token_info.access_token.clone());
             }
-        }
 
         // Fetch new token
         let token_url = format!("{}/oidc/v1/token", self.host);

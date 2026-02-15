@@ -2,7 +2,7 @@ use opentelemetry;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry_otlp::{Protocol, WithExportConfig};
+use opentelemetry_otlp::{Protocol, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::time::Duration;
@@ -27,9 +27,22 @@ fn build_meter_provider(
     service: &'static str,
     version: &'static str,
     endpoint: &str,
+    api_key: Option<String>,
 ) -> impl MeterProvider + use<> {
-    let exporter = opentelemetry_otlp::MetricExporter::builder()
-        .with_tonic()
+    let mut builder = opentelemetry_otlp::MetricExporter::builder().with_tonic();
+
+    if endpoint.starts_with("https://") {
+        builder =
+            builder.with_tls_config(tonic::transport::ClientTlsConfig::new().with_enabled_roots());
+    }
+
+    if let Some(key) = api_key {
+        let mut map = opentelemetry_otlp::tonic_types::metadata::MetadataMap::new();
+        map.insert("api-key", key.parse().unwrap());
+        builder = builder.with_metadata(map);
+    }
+
+    let exporter = builder
         .with_endpoint(endpoint)
         .with_protocol(Protocol::Grpc)
         .with_timeout(Duration::from_secs(3))
@@ -55,15 +68,25 @@ pub fn init_tracing(
     service: &'static str,
     version: &'static str,
     endpoint: String,
+    api_key: Option<String>,
 ) -> OtelInitGuard {
     use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 
     // Configure otel exporter.
-    let exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(&endpoint)
-        .build()
-        .unwrap();
+    let mut builder = opentelemetry_otlp::SpanExporter::builder().with_tonic();
+
+    if endpoint.starts_with("https://") {
+        builder =
+            builder.with_tls_config(tonic::transport::ClientTlsConfig::new().with_enabled_roots());
+    }
+
+    if let Some(ref key) = api_key {
+        let mut map = opentelemetry_otlp::tonic_types::metadata::MetadataMap::new();
+        map.insert("api-key", key.parse().unwrap());
+        builder = builder.with_metadata(map);
+    }
+
+    let exporter = builder.with_endpoint(&endpoint).build().unwrap();
 
     let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
@@ -81,8 +104,9 @@ pub fn init_tracing(
 
     // Compatible layer with tracing.
     let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    let otel_metrics_layer =
-        tracing_opentelemetry::MetricsLayer::new(build_meter_provider(service, version, &endpoint));
+    let otel_metrics_layer = tracing_opentelemetry::MetricsLayer::new(build_meter_provider(
+        service, version, &endpoint, api_key,
+    ));
 
     tracing_subscriber::Registry::default()
         .with(tracing_subscriber::fmt::Layer::new())

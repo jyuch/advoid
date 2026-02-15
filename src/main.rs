@@ -42,6 +42,10 @@ struct Cli {
     #[clap(long)]
     otel: Option<String>,
 
+    /// OTel API key (e.g., New Relic license key)
+    #[clap(long, env = "OTEL_API_KEY")]
+    otel_api_key: Option<String>,
+
     /// Sink mode
     #[clap(long)]
     sink: Option<SinkMode>,
@@ -102,7 +106,12 @@ async fn main() -> anyhow::Result<()> {
     let _otel = if let Some(otel) = opt.otel {
         let service = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");
-        Some(advoid::trace::init_tracing(service, version, otel))
+        Some(advoid::trace::init_tracing(
+            service,
+            version,
+            otel,
+            opt.otel_api_key,
+        ))
     } else {
         advoid::trace::init_tracing_without_otel();
         None

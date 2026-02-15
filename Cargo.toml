@@ -82,7 +82,11 @@ features = ["rt-tokio", "trace", "metrics"]
 [dependencies.opentelemetry-otlp]
 version = "0.31"
 default-features = false
-features = ["grpc-tonic", "trace", "metrics"]
+features = ["grpc-tonic", "trace", "metrics", "tls-webpki-roots"]
+
+[dependencies.tonic]
+version = "0.14"
+features = ["tls-webpki-roots"]
 
 [dependencies.metrics]
 version = "0.24"
