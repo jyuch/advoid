@@ -1,7 +1,8 @@
 use crate::event::Sink;
 use hickory_client::client::{Client, ClientHandle};
 use hickory_proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::{DNSClass, IntoName, Name, Record, RecordType};
+use hickory_proto::rr::rdata::SOA;
+use hickory_proto::rr::{DNSClass, IntoName, Name, RData, Record, RecordType};
 use hickory_proto::xfer::DnsResponse;
 use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
@@ -48,6 +49,28 @@ const RFC6303_ZONES: &[&str] = &[
     // IPv6 documentation (2001:db8::/32)
     "8.b.d.0.1.0.0.2.ip6.arpa.",
 ];
+
+fn synthetic_soa_record() -> Record {
+    let mname = Name::from_ascii("ns.advoid.").unwrap();
+    let rname = Name::from_ascii("hostmaster.advoid.").unwrap();
+    let soa = SOA::new(
+        mname,
+        rname,
+        1,      // serial
+        3600,   // refresh (1 hour)
+        1800,   // retry (30 minutes)
+        604800, // expire (1 week)
+        3600,   // minimum (1 hour negative cache TTL)
+    );
+
+    let mut record = Record::from_rdata(
+        Name::from_ascii("advoid.").unwrap(),
+        3600,
+        RData::SOA(soa),
+    );
+    record.set_dns_class(DNSClass::IN);
+    record
+}
 
 fn is_rfc6303_zone(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -176,7 +199,19 @@ impl StubRequestHandler {
                 send_response(response_edns, response, response_handle).await?
             }
             None => {
-                let response = response_builder.error_msg(request.header(), ResponseCode::NXDomain);
+                let soa_record = synthetic_soa_record();
+                let soa_records = [soa_record];
+                let mut response_header = Header::response_from_request(request.header());
+                response_header.set_response_code(ResponseCode::NXDomain);
+                response_header.set_authoritative(true);
+
+                let response = response_builder.build(
+                    response_header,
+                    &[] as &[Record],
+                    &[] as &[Record],
+                    &soa_records,
+                    &[] as &[Record],
+                );
                 send_response(response_edns, response, response_handle).await?
             }
         };
