@@ -273,7 +273,7 @@ impl RequestHandler for StubRequestHandler {
                         // couldn't handle the request
                         return result.unwrap_or_else(|e| {
                             error!("request error: {}", e);
-                            let mut header = Header::new();
+                            let mut header = Header::response_from_request(request.header());
                             header.set_response_code(ResponseCode::ServFail);
                             header.into()
                         });
@@ -316,7 +316,7 @@ impl RequestHandler for StubRequestHandler {
                         self.sink
                             .response(event_id, ResponseCode::ServFail.to_string())
                             .await;
-                        let mut header = Header::new();
+                        let mut header = Header::response_from_request(request.header());
                         header.set_response_code(ResponseCode::ServFail);
                         header.into()
                     }
@@ -326,7 +326,7 @@ impl RequestHandler for StubRequestHandler {
                 error!("request failed: {}", e);
                 tracing::Span::current()
                     .record("dns.response_code", ResponseCode::ServFail.to_string());
-                let mut header = Header::new();
+                let mut header = Header::response_from_request(request.header());
                 header.set_response_code(ResponseCode::ServFail);
                 header.into()
             }

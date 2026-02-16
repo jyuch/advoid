@@ -70,6 +70,14 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 - `rustc-hash`: FxHashSet for fast blocklist lookups
 - `opentelemetry-otlp`: Optional distributed tracing
 
+### Project Structure
+
+The crate is split into a library (`src/lib.rs` re-exports all modules) and a binary (`src/main.rs`). Tests live in `#[cfg(test)]` modules within each source file.
+
+### RFC Compliance Tracking
+
+`docs/rfc-violations/` contains known RFC compliance issues, numbered and severity-tagged (e.g., `01-high-...`). When a violation is fixed, rename the file to `.done.md` (e.g., `02-high-error-response-query-id-zero.done.md`). Do not delete the file.
+
 ## Important Notes
 
 - The blocklist is loaded once at startup into an `FxHashSet` and never reloaded
