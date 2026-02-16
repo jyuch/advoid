@@ -78,6 +78,10 @@ The crate is split into a library (`src/lib.rs` re-exports all modules) and a bi
 
 `docs/rfc-violations/` contains known RFC compliance issues, numbered and severity-tagged (e.g., `01-high-...`). When a violation is fixed, rename the file to `.done.md` (e.g., `02-high-error-response-query-id-zero.done.md`). Do not delete the file.
 
+### Hickory DNS Usage Notes
+
+`docs/hickory-dns/` contains notes on how to use the Hickory DNS library (hickory-server, hickory-client, hickory-proto). When investigating or implementing Hickory DNS APIs, document the findings there for future reference.
+
 ## Important Notes
 
 - The blocklist is loaded once at startup into an `FxHashSet` and never reloaded
