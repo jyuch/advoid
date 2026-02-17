@@ -6,8 +6,10 @@ use hickory_proto::rr::{DNSClass, IntoName, Name, RData, Record, RecordType};
 use hickory_proto::xfer::DnsResponse;
 use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
+use lru::LruCache;
 use rustc_hash::FxHashSet;
 use std::io;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, instrument, warn};
@@ -73,15 +75,13 @@ fn is_rfc6303_zone(name: &str) -> bool {
 }
 
 struct CheckedDomain {
-    block: FxHashSet<String>,
-    allow: FxHashSet<String>,
+    cache: LruCache<String, bool>,
 }
 
 impl CheckedDomain {
-    pub fn new() -> Self {
+    pub fn new(cap: NonZeroUsize) -> Self {
         CheckedDomain {
-            block: FxHashSet::default(),
-            allow: FxHashSet::default(),
+            cache: LruCache::new(cap),
         }
     }
 }
@@ -100,11 +100,12 @@ impl StubRequestHandler {
         blacklist: FxHashSet<String>,
         sink: Arc<dyn Sink + Sync + Send>,
         block_local_zone: bool,
+        cache_cap: NonZeroUsize,
     ) -> Self {
         StubRequestHandler {
             upstream,
             blacklist,
-            checked: Arc::new(Mutex::new(CheckedDomain::new())),
+            checked: Arc::new(Mutex::new(CheckedDomain::new(cache_cap))),
             sink,
             block_local_zone,
         }
@@ -114,22 +115,21 @@ impl StubRequestHandler {
     async fn is_blacklist_subdomain(&self, domain: &String) -> bool {
         let mut checked = self.checked.lock().await;
 
-        if checked.block.contains(domain) {
-            return true;
-        }
-
-        if checked.allow.contains(domain) {
-            return false;
+        if let Some(&blocked) = checked.cache.get(domain) {
+            metrics::gauge!("dns_cache_entries").set(checked.cache.len() as f64);
+            return blocked;
         }
 
         for it in &self.blacklist {
             if domain == it || domain.ends_with(&format!(".{}", it)) {
-                checked.block.insert(domain.to_string());
+                checked.cache.put(domain.to_string(), true);
+                metrics::gauge!("dns_cache_entries").set(checked.cache.len() as f64);
                 return true;
             }
         }
 
-        checked.allow.insert(domain.to_string());
+        checked.cache.put(domain.to_string(), false);
+        metrics::gauge!("dns_cache_entries").set(checked.cache.len() as f64);
         false
     }
 
@@ -466,6 +466,13 @@ mod tests {
     }
 
     async fn make_handler(blocklist: Vec<&str>) -> StubRequestHandler {
+        make_handler_with_cap(blocklist, NonZeroUsize::new(10000).unwrap()).await
+    }
+
+    async fn make_handler_with_cap(
+        blocklist: Vec<&str>,
+        cache_cap: NonZeroUsize,
+    ) -> StubRequestHandler {
         use crate::event::StubSink;
         use hickory_client::client::Client;
         use hickory_proto::runtime::TokioRuntimeProvider;
@@ -483,6 +490,7 @@ mod tests {
             blacklist,
             Arc::new(sink),
             false,
+            cache_cap,
         )
     }
 
@@ -530,5 +538,30 @@ mod tests {
                 .is_blacklist_subdomain(&"notexample.com.".to_string())
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn test_cache_eviction_returns_correct_results() {
+        // Cache capacity of 2: after inserting 3 entries, the oldest is evicted
+        let handler =
+            make_handler_with_cap(vec!["ad.com."], NonZeroUsize::new(2).unwrap()).await;
+
+        // Fill cache with 2 entries
+        assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);
+        assert!(
+            !handler
+                .is_blacklist_subdomain(&"good.com.".to_string())
+                .await
+        );
+
+        // Insert a 3rd entry, evicting "ad.com." from the cache
+        assert!(
+            !handler
+                .is_blacklist_subdomain(&"other.com.".to_string())
+                .await
+        );
+
+        // "ad.com." was evicted but should still be correctly identified as blocked
+        assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);
     }
 }

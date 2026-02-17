@@ -16,6 +16,7 @@ dependencies = [
  "hickory-client",
  "hickory-proto",
  "hickory-server",
+ "lru",
  "metrics",
  "metrics-exporter-prometheus",
  "opentelemetry",

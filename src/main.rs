@@ -7,6 +7,7 @@ use hickory_proto::runtime::TokioRuntimeProvider;
 use hickory_proto::udp::UdpClientStream;
 use hickory_server::ServerFuture;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, UdpSocket};
@@ -98,6 +99,10 @@ struct Cli {
     /// Forward PTR queries for private/local IP addresses to upstream resolver
     #[clap(long)]
     forward_local_zone: bool,
+
+    /// Maximum number of entries in the domain lookup cache
+    #[clap(long, default_value_t = NonZeroUsize::new(10000).unwrap())]
+    cache_cap: NonZeroUsize,
 
     /// OTel service name (defaults to crate name)
     #[clap(long)]
@@ -191,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
         blocklist,
         sink,
         !opt.forward_local_zone,
+        opt.cache_cap,
     );
 
     let socket = UdpSocket::bind(&opt.bind).await?;
