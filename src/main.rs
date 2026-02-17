@@ -8,7 +8,8 @@ use hickory_proto::udp::UdpClientStream;
 use hickory_server::ServerFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::UdpSocket;
+use std::time::Duration;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::signal;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -193,8 +194,10 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let socket = UdpSocket::bind(&opt.bind).await?;
+    let tcp_listener = TcpListener::bind(&opt.bind).await?;
     let mut server = ServerFuture::new(handler);
     server.register_socket(socket);
+    server.register_listener(tcp_listener, Duration::from_secs(5));
     let server_cancellation_token = server.shutdown_token().clone();
 
     let server_handle = tokio::spawn(async move {
