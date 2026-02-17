@@ -54,20 +54,15 @@ fn synthetic_soa_record() -> Record {
     let mname = Name::from_ascii("ns.advoid.").unwrap();
     let rname = Name::from_ascii("hostmaster.advoid.").unwrap();
     let soa = SOA::new(
-        mname,
-        rname,
-        1,      // serial
+        mname, rname, 1,      // serial
         3600,   // refresh (1 hour)
         1800,   // retry (30 minutes)
         604800, // expire (1 week)
         3600,   // minimum (1 hour negative cache TTL)
     );
 
-    let mut record = Record::from_rdata(
-        Name::from_ascii("advoid.").unwrap(),
-        3600,
-        RData::SOA(soa),
-    );
+    let mut record =
+        Record::from_rdata(Name::from_ascii("advoid.").unwrap(), 3600, RData::SOA(soa));
     record.set_dns_class(DNSClass::IN);
     record
 }
@@ -128,7 +123,7 @@ impl StubRequestHandler {
         }
 
         for it in &self.blacklist {
-            if domain.ends_with(it) {
+            if domain == it || domain.ends_with(&format!(".{}", it)) {
                 checked.block.insert(domain.to_string());
                 return true;
             }
@@ -468,5 +463,72 @@ mod tests {
         assert!(is_rfc6303_zone("1.0.0.127.IN-ADDR.ARPA."));
         assert!(is_rfc6303_zone("1.0.0.10.In-Addr.Arpa."));
         assert!(is_rfc6303_zone("1.0.0.0.D.F.IP6.ARPA."));
+    }
+
+    async fn make_handler(blocklist: Vec<&str>) -> StubRequestHandler {
+        use crate::event::StubSink;
+        use hickory_client::client::Client;
+        use hickory_proto::runtime::TokioRuntimeProvider;
+        use hickory_proto::udp::UdpClientStream;
+
+        let blacklist: FxHashSet<String> = blocklist.into_iter().map(|s| s.to_string()).collect();
+        let conn =
+            UdpClientStream::builder("127.0.0.1:53".parse().unwrap(), TokioRuntimeProvider::new())
+                .build();
+        let (client, bg) = Client::connect(conn).await.unwrap();
+        drop(bg);
+        let (sink, _, _) = StubSink::new();
+        StubRequestHandler::new(
+            Arc::new(Mutex::new(client)),
+            blacklist,
+            Arc::new(sink),
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_exact_match() {
+        let handler = make_handler(vec!["ad.com."]).await;
+        assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_subdomain_match() {
+        let handler = make_handler(vec!["ad.com."]).await;
+        assert!(
+            handler
+                .is_blacklist_subdomain(&"sub.ad.com.".to_string())
+                .await
+        );
+        assert!(
+            handler
+                .is_blacklist_subdomain(&"deep.sub.ad.com.".to_string())
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_no_label_boundary_false_positive() {
+        let handler = make_handler(vec!["ad.com."]).await;
+        assert!(
+            !handler
+                .is_blacklist_subdomain(&"bad.com.".to_string())
+                .await
+        );
+        assert!(
+            !handler
+                .is_blacklist_subdomain(&"mad.com.".to_string())
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_allowed_domain_not_blocked() {
+        let handler = make_handler(vec!["example.com."]).await;
+        assert!(
+            !handler
+                .is_blacklist_subdomain(&"notexample.com.".to_string())
+                .await
+        );
     }
 }
