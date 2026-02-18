@@ -252,7 +252,7 @@ impl StubRequestHandler {
                     response_header,
                     response.answers(),
                     response.name_servers(),
-                    &[],
+                    response.sig0(),
                     response.additionals(),
                 );
                 send_response(response_edns, response, response_handle).await?

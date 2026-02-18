@@ -168,6 +168,47 @@ let response = response_builder.build(
 );
 ```
 
+## DnsResponse — Accessing Upstream Response Sections
+
+`hickory_proto::xfer::DnsResponse` wraps an upstream DNS response. It provides methods to access each section of the response message.
+
+### Available Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `answers()` | `&[Record]` | Answer section records |
+| `name_servers()` | `&[Record]` | Authority section records (NS, SOA) |
+| `additionals()` | `&[Record]` | Additional section records (glue A/AAAA) |
+| `sig0()` | `&[Record]` | SIG(0) transaction signature records (RFC 2931) |
+
+**Note:** There is no `sigs()` method. The correct method name for signature records is `sig0()`.
+
+### Forwarding an Upstream Response
+
+When forwarding a response from an upstream resolver, map each `DnsResponse` method to the corresponding `build()` parameter:
+
+```rust
+let response = response_builder.build(
+    response_header,
+    response.answers(),        // answers → answers
+    response.name_servers(),   // name_servers → name_servers
+    response.sig0(),           // sig0 → soa (SIG(0) records)
+    response.additionals(),    // additionals → additionals
+);
+```
+
+Passing `&[]` instead of `response.sig0()` silently drops SIG(0) records from forwarded responses. This violates RFC 4035 if the upstream returns DNSSEC-related signature data.
+
+### Header Fields to Forward
+
+When constructing the response header for forwarded responses, copy relevant flags from the upstream:
+
+```rust
+let mut response_header = Header::response_from_request(request.header());
+response_header.set_recursion_available(response.recursion_available());
+response_header.set_response_code(response.response_code());
+```
+
 ## send_response
 
 Use `ResponseHandler`'s `send_response` to send the response to the client. For EDNS support, call `response.set_edns(edns)` beforehand.
