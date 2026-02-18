@@ -104,6 +104,70 @@ record.set_dns_class(DNSClass::IN);
 | expire | Time before secondaries consider the zone invalid |
 | minimum | Negative cache TTL (RFC 2308) |
 
+## Building an NS Record
+
+`NS` is a newtype struct wrapping `Name`, defined in `hickory_proto::rr::rdata::name`.
+
+```rust
+use hickory_proto::rr::rdata::NS;
+use hickory_proto::rr::{DNSClass, Name, RData, Record};
+
+let ns_name = Name::from_ascii("ns.example.").unwrap();
+let mut record = Record::from_rdata(
+    Name::from_ascii("example.").unwrap(),  // owner name (zone apex)
+    3600,                                    // TTL
+    RData::NS(NS(ns_name)),                 // NS is a newtype: NS(Name)
+);
+record.set_dns_class(DNSClass::IN);
+```
+
+### Import Path
+
+`NS` can be imported from either location:
+
+- `hickory_proto::rr::rdata::NS` (re-exported)
+- `hickory_proto::rr::rdata::name::NS` (original definition)
+
+The same newtype pattern applies to `CNAME`, `PTR`, and `ANAME` — they are all `pub struct T(pub Name)` defined in the same `name` module.
+
+## Placing Records in Response Sections
+
+The `build()` method maps its arguments to DNS message sections:
+
+| Argument | DNS Section | Typical Use |
+|----------|-------------|-------------|
+| `answers` | Answer | Records that directly answer the query (A, AAAA, SOA at apex, NS at apex) |
+| `name_servers` | Authority | NS records for referrals, SOA in NXDOMAIN/NODATA responses |
+| `soa` | Authority | SOA record (shorthand for authority section) |
+| `additionals` | Additional | Glue records (A/AAAA for NS targets) |
+
+For **zone apex queries** (SOA or NS type at the zone name itself), the matching record goes in the **answers** section with `ResponseCode::NoError`:
+
+```rust
+let answer = synthetic_ns_record(zone);
+let answers = [answer];
+let response = response_builder.build(
+    response_header,       // NoError, authoritative
+    &answers,              // NS/SOA record as answer
+    &[] as &[Record],
+    &[] as &[Record],
+    &[] as &[Record],
+);
+```
+
+For **NXDOMAIN responses**, the SOA record goes in the **soa/authority** section with no answers:
+
+```rust
+let soa_records = [soa_record];
+let response = response_builder.build(
+    response_header,       // NXDomain, authoritative
+    &[] as &[Record],      // no answers
+    &[] as &[Record],
+    &soa_records,          // SOA in authority section
+    &[] as &[Record],
+);
+```
+
 ## send_response
 
 Use `ResponseHandler`'s `send_response` to send the response to the client. For EDNS support, call `response.set_edns(edns)` beforehand.

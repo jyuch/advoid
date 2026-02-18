@@ -52,7 +52,7 @@ const RFC6303_ZONES: &[&str] = &[
     "8.b.d.0.1.0.0.2.ip6.arpa.",
 ];
 
-fn synthetic_soa_record() -> Record {
+fn synthetic_soa_record_for_zone(zone: &str) -> Record {
     let mname = Name::from_ascii("ns.advoid.").unwrap();
     let rname = Name::from_ascii("hostmaster.advoid.").unwrap();
     let soa = SOA::new(
@@ -64,14 +64,39 @@ fn synthetic_soa_record() -> Record {
     );
 
     let mut record =
-        Record::from_rdata(Name::from_ascii("advoid.").unwrap(), 3600, RData::SOA(soa));
+        Record::from_rdata(Name::from_ascii(zone).unwrap(), 3600, RData::SOA(soa));
     record.set_dns_class(DNSClass::IN);
     record
 }
 
-fn is_rfc6303_zone(name: &str) -> bool {
+fn synthetic_soa_record() -> Record {
+    synthetic_soa_record_for_zone("advoid.")
+}
+
+fn synthetic_ns_record(zone: &str) -> Record {
+    use hickory_proto::rr::rdata::NS;
+    let ns_name = Name::from_ascii("ns.advoid.").unwrap();
+    let mut record = Record::from_rdata(
+        Name::from_ascii(zone).unwrap(),
+        3600,
+        RData::NS(NS(ns_name)),
+    );
+    record.set_dns_class(DNSClass::IN);
+    record
+}
+
+fn find_rfc6303_zone(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
-    RFC6303_ZONES.iter().any(|zone| lower.ends_with(zone))
+    RFC6303_ZONES
+        .iter()
+        .copied()
+        .filter(|zone| lower.ends_with(zone))
+        .max_by_key(|zone| zone.len())
+}
+
+#[cfg(test)]
+fn is_rfc6303_zone(name: &str) -> bool {
+    find_rfc6303_zone(name).is_some()
 }
 
 struct CheckedDomain {
@@ -162,7 +187,45 @@ impl StubRequestHandler {
 
         let name_str = name.to_string();
 
-        let upstream_response = if self.block_local_zone && is_rfc6303_zone(&name_str) {
+        // Early return for RFC 6303 zone apex SOA/NS queries
+        if self.block_local_zone {
+            if let Some(zone) = find_rfc6303_zone(&name_str) {
+                let is_apex = name_str.to_ascii_lowercase() == zone;
+                if is_apex && (tpe == RecordType::SOA || tpe == RecordType::NS) {
+                    debug!("Serving RFC 6303 zone apex {} {}", tpe, &name);
+                    metrics::counter!("dns_requests_block").increment(1);
+
+                    let response_builder = MessageResponseBuilder::from_message_request(request);
+                    let mut response_header = Header::response_from_request(request.header());
+                    response_header.set_response_code(ResponseCode::NoError);
+                    response_header.set_authoritative(true);
+
+                    let answer = if tpe == RecordType::SOA {
+                        synthetic_soa_record_for_zone(zone)
+                    } else {
+                        synthetic_ns_record(zone)
+                    };
+                    let answers = [answer];
+
+                    let response = response_builder.build(
+                        response_header,
+                        &answers,
+                        &[] as &[Record],
+                        &[] as &[Record],
+                        &[] as &[Record],
+                    );
+                    return Ok(send_response(response_edns, response, response_handle).await?);
+                }
+            }
+        }
+
+        let rfc6303_matched_zone = if self.block_local_zone {
+            find_rfc6303_zone(&name_str)
+        } else {
+            None
+        };
+
+        let upstream_response = if rfc6303_matched_zone.is_some() {
             debug!("Blocking RFC 6303 local zone query {}", &name);
             metrics::counter!("dns_requests_block").increment(1);
             None
@@ -194,7 +257,10 @@ impl StubRequestHandler {
                 send_response(response_edns, response, response_handle).await?
             }
             None => {
-                let soa_record = synthetic_soa_record();
+                let soa_record = match rfc6303_matched_zone {
+                    Some(zone) => synthetic_soa_record_for_zone(zone),
+                    None => synthetic_soa_record(),
+                };
                 let soa_records = [soa_record];
                 let mut response_header = Header::response_from_request(request.header());
                 response_header.set_response_code(ResponseCode::NXDomain);
@@ -456,6 +522,33 @@ mod tests {
         assert!(!is_rfc6303_zone("1.0.15.172.in-addr.arpa."));
         // 172.32 is not in the private range
         assert!(!is_rfc6303_zone("1.0.32.172.in-addr.arpa."));
+    }
+
+    #[test]
+    fn test_find_rfc6303_zone_returns_zone_name() {
+        assert_eq!(
+            find_rfc6303_zone("1.0.0.10.in-addr.arpa."),
+            Some("10.in-addr.arpa.")
+        );
+        assert_eq!(
+            find_rfc6303_zone("5.168.192.in-addr.arpa."),
+            Some("168.192.in-addr.arpa.")
+        );
+    }
+
+    #[test]
+    fn test_find_rfc6303_zone_apex() {
+        let zone = find_rfc6303_zone("10.in-addr.arpa.");
+        assert_eq!(zone, Some("10.in-addr.arpa."));
+        // Verify the name equals the zone (apex detection)
+        assert_eq!("10.in-addr.arpa.", zone.unwrap());
+    }
+
+    #[test]
+    fn test_find_rfc6303_zone_non_matching() {
+        assert_eq!(find_rfc6303_zone("example.com."), None);
+        assert_eq!(find_rfc6303_zone("google.com."), None);
+        assert_eq!(find_rfc6303_zone("1.0.0.8.in-addr.arpa."), None);
     }
 
     #[test]
