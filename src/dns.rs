@@ -199,6 +199,7 @@ impl StubRequestHandler {
                     let mut response_header = Header::response_from_request(request.header());
                     response_header.set_response_code(ResponseCode::NoError);
                     response_header.set_authoritative(true);
+                    response_header.set_recursion_available(true);
 
                     let answer = if tpe == RecordType::SOA {
                         synthetic_soa_record_for_zone(zone)
@@ -265,6 +266,7 @@ impl StubRequestHandler {
                 let mut response_header = Header::response_from_request(request.header());
                 response_header.set_response_code(ResponseCode::NXDomain);
                 response_header.set_authoritative(true);
+                response_header.set_recursion_available(true);
 
                 let response = response_builder.build(
                     response_header,
