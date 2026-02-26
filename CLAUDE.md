@@ -46,11 +46,14 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 - `CheckedDomain`: Two-level cache (separate allow/block `FxHashSet`s) to avoid repeated full blocklist scans
 - EDNS support, Prometheus metrics emission, event sink integration
 
-**`src/event.rs`** — Event sink system
-- `Sink` trait with three implementations: `StubSink` (no-op), `S3Sink`, `DatabricksSink`
-- All sinks use unbounded MPSC channels + background worker tasks for non-blocking operation
-- UUIDv7 for time-ordered event IDs, newline-delimited JSON format
-- `DatabricksSink` includes OAuth token caching with automatic refresh
+**`src/event/`** — Event sink system (module directory)
+- `mod.rs`: `Sink` trait, `Request`/`Response` types, re-exports all sink types
+- `worker.rs`: `EventUploader` trait + generic `initialize_worker()` — shared batching, NDJSON serialization, sleep/cancel, and graceful drain logic. New sinks only need to implement `EventUploader`.
+- `channel.rs`: `ChannelSink` — shared `Sink` impl for channel-based sinks (UUID generation + channel send). Sinks that use background workers wrap this and delegate.
+- `stub.rs`: `StubSink` (no-op)
+- `s3.rs`: `S3Sink`, `S3Uploader` (implements `EventUploader`), `s3_key()`
+- `databricks.rs`: `DatabricksSink`, `DatabricksUploader`, `DatabricksClient` (OAuth token caching with automatic refresh)
+- To add a new sink: implement `EventUploader`, create a struct wrapping `ChannelSink`, use `initialize_worker()` in the constructor
 
 **`src/blocklist.rs`** — Loads blocklist from file path or HTTP(S) URL. Format: one domain per line, `#` comments, trailing dot normalized.
 
