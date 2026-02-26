@@ -188,8 +188,8 @@ impl StubRequestHandler {
         let name_str = name.to_string();
 
         // Early return for RFC 6303 zone apex SOA/NS queries
-        if self.block_local_zone {
-            if let Some(zone) = find_rfc6303_zone(&name_str) {
+        if self.block_local_zone
+            && let Some(zone) = find_rfc6303_zone(&name_str) {
                 let is_apex = name_str.to_ascii_lowercase() == zone;
                 if is_apex && (tpe == RecordType::SOA || tpe == RecordType::NS) {
                     debug!("Serving RFC 6303 zone apex {} {}", tpe, &name);
@@ -218,7 +218,6 @@ impl StubRequestHandler {
                     return Ok(send_response(response_edns, response, response_handle).await?);
                 }
             }
-        }
 
         let rfc6303_matched_zone = if self.block_local_zone {
             find_rfc6303_zone(&name_str)
