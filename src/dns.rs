@@ -63,8 +63,7 @@ fn synthetic_soa_record_for_zone(zone: &str) -> Record {
         3600,   // minimum (1 hour negative cache TTL)
     );
 
-    let mut record =
-        Record::from_rdata(Name::from_ascii(zone).unwrap(), 3600, RData::SOA(soa));
+    let mut record = Record::from_rdata(Name::from_ascii(zone).unwrap(), 3600, RData::SOA(soa));
     record.set_dns_class(DNSClass::IN);
     record
 }
@@ -189,35 +188,36 @@ impl StubRequestHandler {
 
         // Early return for RFC 6303 zone apex SOA/NS queries
         if self.block_local_zone
-            && let Some(zone) = find_rfc6303_zone(&name_str) {
-                let is_apex = name_str.to_ascii_lowercase() == zone;
-                if is_apex && (tpe == RecordType::SOA || tpe == RecordType::NS) {
-                    debug!("Serving RFC 6303 zone apex {} {}", tpe, &name);
-                    metrics::counter!("dns_requests_block").increment(1);
+            && let Some(zone) = find_rfc6303_zone(&name_str)
+        {
+            let is_apex = name_str.to_ascii_lowercase() == zone;
+            if is_apex && (tpe == RecordType::SOA || tpe == RecordType::NS) {
+                debug!("Serving RFC 6303 zone apex {} {}", tpe, &name);
+                metrics::counter!("dns_requests_block").increment(1);
 
-                    let response_builder = MessageResponseBuilder::from_message_request(request);
-                    let mut response_header = Header::response_from_request(request.header());
-                    response_header.set_response_code(ResponseCode::NoError);
-                    response_header.set_authoritative(true);
-                    response_header.set_recursion_available(true);
+                let response_builder = MessageResponseBuilder::from_message_request(request);
+                let mut response_header = Header::response_from_request(request.header());
+                response_header.set_response_code(ResponseCode::NoError);
+                response_header.set_authoritative(true);
+                response_header.set_recursion_available(true);
 
-                    let answer = if tpe == RecordType::SOA {
-                        synthetic_soa_record_for_zone(zone)
-                    } else {
-                        synthetic_ns_record(zone)
-                    };
-                    let answers = [answer];
+                let answer = if tpe == RecordType::SOA {
+                    synthetic_soa_record_for_zone(zone)
+                } else {
+                    synthetic_ns_record(zone)
+                };
+                let answers = [answer];
 
-                    let response = response_builder.build(
-                        response_header,
-                        &answers,
-                        &[] as &[Record],
-                        &[] as &[Record],
-                        &[] as &[Record],
-                    );
-                    return Ok(send_response(response_edns, response, response_handle).await?);
-                }
+                let response = response_builder.build(
+                    response_header,
+                    &answers,
+                    &[] as &[Record],
+                    &[] as &[Record],
+                    &[] as &[Record],
+                );
+                return Ok(send_response(response_edns, response, response_handle).await?);
             }
+        }
 
         let rfc6303_matched_zone = if self.block_local_zone {
             find_rfc6303_zone(&name_str)
@@ -637,8 +637,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_eviction_returns_correct_results() {
         // Cache capacity of 2: after inserting 3 entries, the oldest is evicted
-        let handler =
-            make_handler_with_cap(vec!["ad.com."], NonZeroUsize::new(2).unwrap()).await;
+        let handler = make_handler_with_cap(vec!["ad.com."], NonZeroUsize::new(2).unwrap()).await;
 
         // Fill cache with 2 entries
         assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);
