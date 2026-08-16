@@ -1,10 +1,12 @@
 # TCP Listener Registration
 
-Notes on adding TCP transport support with hickory-server's `ServerFuture`.
+Notes on adding TCP transport support with hickory-server's `Server`. Current for **hickory 0.26**.
 
-## ServerFuture
+## Server
 
-`hickory_server::ServerFuture` manages both UDP and TCP transports. A single `ServerFuture` instance can serve the same `RequestHandler` over multiple transports simultaneously.
+`hickory_server::Server` manages both UDP and TCP transports. A single `Server` instance can serve the same `RequestHandler` over multiple transports simultaneously.
+
+> **Renamed in 0.26:** `ServerFuture<T>` → `Server<T>`. Also, `register_socket_std` and `register_listener_std` were removed — convert with `tokio::net::UdpSocket::from_std` / `TcpListener::from_std` yourself.
 
 ### UDP Registration
 
@@ -12,7 +14,7 @@ Notes on adding TCP transport support with hickory-server's `ServerFuture`.
 use tokio::net::UdpSocket;
 
 let socket = UdpSocket::bind("127.0.0.1:53").await?;
-let mut server = ServerFuture::new(handler);
+let mut server = Server::new(handler);
 server.register_socket(socket);
 ```
 
@@ -23,10 +25,11 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 
 let tcp_listener = TcpListener::bind("127.0.0.1:53").await?;
-server.register_listener(tcp_listener, Duration::from_secs(5));
+server.register_listener(tcp_listener, Duration::from_secs(5), 32);
 ```
 
-The second argument is the idle timeout — TCP connections with no activity for this duration are closed by the server.
+- **2nd argument — idle timeout.** TCP connections with no activity for this duration are closed by the server.
+- **3rd argument — `response_buffer_size`** (new in 0.26). The outgoing-response buffer length per connection, forwarded to `TcpStream::from_stream_with_buffer_size`. 0.25 called `TcpStream::from_stream`, which used hickory's internal `DEFAULT_STREAM_BUFFER_SIZE = 32`, so **pass `32` to preserve 0.25 behavior**. A larger value helps only under high per-connection message rates, where a small buffer would drop responses to backpressure.
 
 ### UDP + TCP on the Same Address
 
@@ -37,10 +40,16 @@ let addr = "127.0.0.1:53";
 let udp_socket = UdpSocket::bind(addr).await?;
 let tcp_listener = TcpListener::bind(addr).await?;
 
-let mut server = ServerFuture::new(handler);
+let mut server = Server::new(handler);
 server.register_socket(udp_socket);
-server.register_listener(tcp_listener, Duration::from_secs(5));
+server.register_listener(tcp_listener, Duration::from_secs(5), 32);
 ```
+
+### Other 0.26 signature changes
+
+- `with_access` takes `impl IntoIterator<Item = IpNet>` instead of `&[IpNet]`.
+- `block_until_done` and `shutdown_gracefully` return `Result<(), NetError>` instead of `Result<(), ProtoError>`.
+- New free function `default_tls_server_config(protocol, server_cert_resolver) -> io::Result<ServerConfig>`.
 
 ## TCP Framing
 
@@ -62,7 +71,7 @@ A value of 5 seconds is a reasonable default for a local stub resolver.
 
 ## Shutdown
 
-`ServerFuture::shutdown_token()` returns a `CancellationToken` that, when cancelled, shuts down both UDP and TCP listeners. No separate shutdown handling is needed per transport.
+`Server::shutdown_token()` returns a `CancellationToken` that, when cancelled, shuts down both UDP and TCP listeners. No separate shutdown handling is needed per transport.
 
 ```rust
 let shutdown_token = server.shutdown_token().clone();

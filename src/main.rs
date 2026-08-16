@@ -2,17 +2,16 @@ use advoid::dns::StubRequestHandler;
 use advoid::event::{DatabricksSink, S3Sink, Sink, StubSink};
 use aws_config::BehaviorVersion;
 use clap::{Parser, ValueEnum};
-use hickory_client::client::Client;
-use hickory_proto::runtime::TokioRuntimeProvider;
-use hickory_proto::udp::UdpClientStream;
-use hickory_server::ServerFuture;
+use hickory_net::client::Client;
+use hickory_net::runtime::TokioRuntimeProvider;
+use hickory_net::udp::UdpClientStream;
+use hickory_server::Server;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::signal;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -188,11 +187,11 @@ async fn main() -> anyhow::Result<()> {
     let blocklist = advoid::blocklist::get(opt.block).await?;
 
     let conn = UdpClientStream::builder(opt.upstream, TokioRuntimeProvider::new()).build();
-    let (upstream, background) = Client::connect(conn).await?;
+    let (upstream, background) = Client::<TokioRuntimeProvider>::from_sender(conn);
     let _handle = tokio::spawn(background);
 
     let handler = StubRequestHandler::new(
-        Arc::new(Mutex::new(upstream)),
+        upstream,
         blocklist,
         sink,
         !opt.forward_local_zone,
@@ -201,9 +200,10 @@ async fn main() -> anyhow::Result<()> {
 
     let socket = UdpSocket::bind(&opt.bind).await?;
     let tcp_listener = TcpListener::bind(&opt.bind).await?;
-    let mut server = ServerFuture::new(handler);
+    let mut server = Server::new(handler);
     server.register_socket(socket);
-    server.register_listener(tcp_listener, Duration::from_secs(5));
+    // 32 matches hickory's own DEFAULT_STREAM_BUFFER_SIZE, which 0.25 used implicitly.
+    server.register_listener(tcp_listener, Duration::from_secs(5), 32);
     let server_cancellation_token = server.shutdown_token().clone();
 
     let server_handle = tokio::spawn(async move {

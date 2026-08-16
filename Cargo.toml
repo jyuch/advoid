@@ -36,14 +36,13 @@ default-features = false
 features = ["rustls-tls-webpki-roots", "json"]
 
 [dependencies.hickory-proto]
-version = "0.25"
+version = "0.26"
 
 [dependencies.hickory-server]
-version = "0.25"
+version = "0.26"
 
-[dependencies.hickory-client]
-version = "0.25"
-default-features = false
+[dependencies.hickory-net]
+version = "0.26"
 
 [dependencies.clap]
 version = "4"

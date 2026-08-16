@@ -1,14 +1,16 @@
 use crate::event::Sink;
-use hickory_client::client::{Client, ClientHandle};
-use hickory_proto::op::{Edns, Header, MessageType, OpCode, ResponseCode};
+use hickory_net::NetError;
+use hickory_net::client::{Client, ClientHandle};
+use hickory_net::runtime::{Time, TokioRuntimeProvider};
+use hickory_proto::op::{
+    DnsResponse, Edns, Header, HeaderCounts, MessageType, Metadata, OpCode, ResponseCode,
+};
 use hickory_proto::rr::rdata::SOA;
 use hickory_proto::rr::{DNSClass, IntoName, Name, RData, Record, RecordType};
-use hickory_proto::xfer::DnsResponse;
-use hickory_server::authority::{MessageResponse, MessageResponseBuilder};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
+use hickory_server::zone_handler::{MessageResponse, MessageResponseBuilder};
 use lru::LruCache;
 use rustc_hash::FxHashSet;
-use std::io;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -64,7 +66,7 @@ fn synthetic_soa_record_for_zone(zone: &str) -> Record {
     );
 
     let mut record = Record::from_rdata(Name::from_ascii(zone).unwrap(), 3600, RData::SOA(soa));
-    record.set_dns_class(DNSClass::IN);
+    record.dns_class = DNSClass::IN;
     record
 }
 
@@ -80,7 +82,7 @@ fn synthetic_ns_record(zone: &str) -> Record {
         3600,
         RData::NS(NS(ns_name)),
     );
-    record.set_dns_class(DNSClass::IN);
+    record.dns_class = DNSClass::IN;
     record
 }
 
@@ -111,7 +113,7 @@ impl CheckedDomain {
 }
 
 pub struct StubRequestHandler {
-    upstream: Arc<Mutex<Client>>,
+    upstream: Client<TokioRuntimeProvider>,
     blacklist: FxHashSet<String>,
     checked: Arc<Mutex<CheckedDomain>>,
     sink: Arc<dyn Sink + Sync + Send>,
@@ -120,7 +122,7 @@ pub struct StubRequestHandler {
 
 impl StubRequestHandler {
     pub fn new(
-        upstream: Arc<Mutex<Client>>,
+        upstream: Client<TokioRuntimeProvider>,
         blacklist: FxHashSet<String>,
         sink: Arc<dyn Sink + Sync + Send>,
         block_local_zone: bool,
@@ -164,7 +166,8 @@ impl StubRequestHandler {
         query_class: DNSClass,
         query_type: RecordType,
     ) -> anyhow::Result<DnsResponse> {
-        let mut upstream = { self.upstream.lock().await.clone() };
+        // `ClientHandle::query` takes `&mut self`, but `Client` is `Clone` and cheap to clone.
+        let mut upstream = self.upstream.clone();
         let response = upstream
             .query(name.clone(), query_class, query_type)
             .await?;
@@ -174,8 +177,8 @@ impl StubRequestHandler {
     #[instrument(skip_all)]
     async fn handle_query<R: ResponseHandler>(
         &self,
-        response_edns: Option<Edns>,
         request: &Request,
+        response_edns: Option<&Edns>,
         response_handle: R,
     ) -> anyhow::Result<ResponseInfo> {
         let request_info = request.request_info()?;
@@ -195,11 +198,10 @@ impl StubRequestHandler {
                 debug!("Serving RFC 6303 zone apex {} {}", tpe, &name);
                 metrics::counter!("dns_requests_block").increment(1);
 
-                let response_builder = MessageResponseBuilder::from_message_request(request);
-                let mut response_header = Header::response_from_request(request.header());
-                response_header.set_response_code(ResponseCode::NoError);
-                response_header.set_authoritative(true);
-                response_header.set_recursion_available(true);
+                let mut metadata = Metadata::response_from_request(&request.metadata);
+                metadata.response_code = ResponseCode::NoError;
+                metadata.authoritative = true;
+                metadata.recursion_available = true;
 
                 let answer = if tpe == RecordType::SOA {
                     synthetic_soa_record_for_zone(zone)
@@ -208,14 +210,14 @@ impl StubRequestHandler {
                 };
                 let answers = [answer];
 
-                let response = response_builder.build(
-                    response_header,
+                let response = MessageResponseBuilder::new(&request.queries, response_edns).build(
+                    metadata,
                     &answers,
                     &[] as &[Record],
                     &[] as &[Record],
                     &[] as &[Record],
                 );
-                return Ok(send_response(response_edns, response, response_handle).await?);
+                return Ok(send_response(response, response_handle).await?);
             }
         }
 
@@ -239,22 +241,25 @@ impl StubRequestHandler {
             Some(dns_response)
         };
 
-        let response_builder = MessageResponseBuilder::from_message_request(request);
-
         let response_info = match upstream_response {
-            Some(response) => {
-                let mut response_header = Header::response_from_request(request.header());
-                response_header.set_recursion_available(response.recursion_available());
-                response_header.set_response_code(response.response_code());
+            Some(upstream) => {
+                let mut metadata = Metadata::response_from_request(&request.metadata);
+                metadata.recursion_available = upstream.metadata.recursion_available;
+                metadata.response_code = upstream.metadata.response_code;
 
-                let response = response_builder.build(
-                    response_header,
-                    response.answers(),
-                    response.name_servers(),
-                    response.sig0(),
-                    response.additionals(),
+                // The soa slot is left empty: `DnsResponse::sig0()` is gone in hickory 0.26 and
+                // the signature is now a single `Option<Box<Record<TSIG>>>`. TSIG is a hop-by-hop
+                // signature, so forwarding the upstream's onto a response we rebuilt ourselves
+                // would produce an invalid MAC. DNSSEC records (RRSIG, NSEC, ...) travel in the
+                // answer/authority/additional sections and are still forwarded below.
+                let response = MessageResponseBuilder::new(&request.queries, response_edns).build(
+                    metadata,
+                    &upstream.answers,
+                    &upstream.authorities,
+                    &[] as &[Record],
+                    &upstream.additionals,
                 );
-                send_response(response_edns, response, response_handle).await?
+                send_response(response, response_handle).await?
             }
             None => {
                 let soa_record = match rfc6303_matched_zone {
@@ -262,19 +267,19 @@ impl StubRequestHandler {
                     None => synthetic_soa_record(),
                 };
                 let soa_records = [soa_record];
-                let mut response_header = Header::response_from_request(request.header());
-                response_header.set_response_code(ResponseCode::NXDomain);
-                response_header.set_authoritative(true);
-                response_header.set_recursion_available(true);
+                let mut metadata = Metadata::response_from_request(&request.metadata);
+                metadata.response_code = ResponseCode::NXDomain;
+                metadata.authoritative = true;
+                metadata.recursion_available = true;
 
-                let response = response_builder.build(
-                    response_header,
+                let response = MessageResponseBuilder::new(&request.queries, response_edns).build(
+                    metadata,
                     &[] as &[Record],
                     &[] as &[Record],
                     &soa_records,
                     &[] as &[Record],
                 );
-                send_response(response_edns, response, response_handle).await?
+                send_response(response, response_handle).await?
             }
         };
 
@@ -284,26 +289,33 @@ impl StubRequestHandler {
     #[instrument(skip_all)]
     async fn server_not_implement<R: ResponseHandler>(
         &self,
-        response_edns: Option<Edns>,
         request: &Request,
+        response_edns: Option<&Edns>,
         response_handle: R,
     ) -> anyhow::Result<ResponseInfo> {
-        let response = MessageResponseBuilder::from_message_request(request);
-        let response_info = send_response(
-            response_edns,
-            response.error_msg(request.header(), ResponseCode::NotImp),
-            response_handle,
-        )
-        .await?;
+        let response = MessageResponseBuilder::new(&request.queries, response_edns)
+            .error_msg(&request.metadata, ResponseCode::NotImp);
+        let response_info = send_response(response, response_handle).await?;
 
         Ok(response_info)
     }
 }
 
+/// `ResponseInfo::serve_failed` is `pub(crate)` in hickory-server, so build the equivalent here.
+fn serve_failed(request: &Request) -> ResponseInfo {
+    let mut metadata = Metadata::response_from_request(&request.metadata);
+    metadata.response_code = ResponseCode::ServFail;
+    Header {
+        metadata,
+        counts: HeaderCounts::default(),
+    }
+    .into()
+}
+
 #[async_trait::async_trait]
 impl RequestHandler for StubRequestHandler {
     #[instrument(skip_all, fields(dns.src, dns.name, dns.query_class, dns.query_type, dns.op_code, dns.response_code))]
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: Time>(
         &self,
         request: &Request,
         mut response_handle: R,
@@ -319,7 +331,7 @@ impl RequestHandler for StubRequestHandler {
                     tracing::Span::current().record("dns.query_class", &query_class);
                     let query_type = request_info.query.query_type().to_string();
                     tracing::Span::current().record("dns.query_type", &query_type);
-                    let op_code = request_info.header.op_code().to_string();
+                    let op_code = request_info.metadata.op_code.to_string();
                     tracing::Span::current().record("dns.op_code", &op_code);
                 };
 
@@ -329,7 +341,7 @@ impl RequestHandler for StubRequestHandler {
                     let name = request_info.query.name().to_string();
                     let query_class = request_info.query.query_class().to_string();
                     let query_type = request_info.query.query_type().to_string();
-                    let op_code = request_info.header.op_code().to_string();
+                    let op_code = request_info.metadata.op_code.to_string();
 
                     self.sink
                         .request(src_ip, src_port, name, query_class, query_type, op_code)
@@ -338,12 +350,14 @@ impl RequestHandler for StubRequestHandler {
 
                 metrics::counter!("dns_requests_total").increment(1);
 
-                // check if it's edns
-                let response_edns = if let Some(req_edns) = request.edns() {
-                    let mut response = MessageResponseBuilder::from_message_request(request);
-                    let mut response_header = Header::response_from_request(request.header());
+                // Owned response EDNS. It must live in this scope: as of hickory 0.26
+                // `MessageResponseBuilder`/`MessageResponse` borrow the `Edns` for their `'q`
+                // lifetime, so it has to outlive every response built downstream.
+                let mut resp_edns: Edns;
 
-                    let mut resp_edns: Edns = Edns::new();
+                // check if it's edns
+                let response_edns: Option<&Edns> = if let Some(req_edns) = request.edns.as_ref() {
+                    resp_edns = Edns::new();
 
                     // check our version against the request
                     // TODO: what version are we?
@@ -358,50 +372,53 @@ impl RequestHandler for StubRequestHandler {
                             our_version,
                             req_edns.version()
                         );
-                        response_header.set_response_code(ResponseCode::BADVERS);
+
+                        // Mutate before taking the shared borrow below; the order matters.
                         resp_edns.set_rcode_high(ResponseCode::BADVERS.high());
-                        response.edns(resp_edns);
+
+                        let mut metadata = Metadata::response_from_request(&request.metadata);
+                        metadata.response_code = ResponseCode::BADVERS;
+
+                        let response =
+                            MessageResponseBuilder::new(&request.queries, Some(&resp_edns))
+                                .build_no_records(metadata);
 
                         // TODO: should ResponseHandle consume self?
-                        let result = response_handle
-                            .send_response(response.build_no_records(response_header))
-                            .await;
+                        let result = response_handle.send_response(response).await;
 
                         // couldn't handle the request
                         return result.unwrap_or_else(|e| {
                             error!("request error: {}", e);
-                            let mut header = Header::response_from_request(request.header());
-                            header.set_response_code(ResponseCode::ServFail);
-                            header.into()
+                            serve_failed(request)
                         });
                     }
 
-                    Some(resp_edns)
+                    Some(&resp_edns)
                 } else {
                     None
                 };
 
-                let result = match request.message_type() {
-                    MessageType::Query => match request.op_code() {
+                let result = match request.metadata.message_type {
+                    MessageType::Query => match request.metadata.op_code {
                         OpCode::Query => {
-                            self.handle_query(response_edns, request, response_handle)
+                            self.handle_query(request, response_edns, response_handle)
                                 .await
                         }
                         c => {
                             warn!("unimplemented op_code: {:?}", c);
-                            self.server_not_implement(response_edns, request, response_handle)
+                            self.server_not_implement(request, response_edns, response_handle)
                                 .await
                         }
                     },
                     MessageType::Response => {
-                        self.server_not_implement(response_edns, request, response_handle)
+                        self.server_not_implement(request, response_edns, response_handle)
                             .await
                     }
                 };
 
                 match result {
                     Ok(response_info) => {
-                        let response_code = response_info.response_code().to_string();
+                        let response_code = response_info.response_code.to_string();
                         tracing::Span::current().record("dns.response_code", &response_code);
                         self.sink.response(event_id, response_code).await;
                         response_info
@@ -413,9 +430,7 @@ impl RequestHandler for StubRequestHandler {
                         self.sink
                             .response(event_id, ResponseCode::ServFail.to_string())
                             .await;
-                        let mut header = Header::response_from_request(request.header());
-                        header.set_response_code(ResponseCode::ServFail);
-                        header.into()
+                        serve_failed(request)
                     }
                 }
             }
@@ -423,19 +438,27 @@ impl RequestHandler for StubRequestHandler {
                 error!("request failed: {}", e);
                 tracing::Span::current()
                     .record("dns.response_code", ResponseCode::ServFail.to_string());
-                let mut header = Header::response_from_request(request.header());
-                header.set_response_code(ResponseCode::ServFail);
-                header.into()
+                serve_failed(request)
             }
         }
     }
 }
 
-#[allow(unused_mut, unused_variables)]
+/// The response EDNS is attached when the `MessageResponseBuilder` is constructed (hickory 0.26
+/// borrows it for the builder's lifetime), so this is now just an instrumented send.
+///
+/// If the EDNS DAU/DHU options are ever needed, they belong in `handle_request` next to
+/// `set_rcode_high`, where `resp_edns` is still owned and mutable:
+///
+/// ```text
+/// let mut algorithms = SupportedAlgorithms::default();
+/// algorithms.set(Algorithm::RSASHA256);
+/// resp_edns.options_mut().insert(EdnsOption::DAU(algorithms));
+/// resp_edns.options_mut().insert(EdnsOption::DHU(algorithms));
+/// ```
 #[instrument(skip_all)]
 async fn send_response<'a, R: ResponseHandler>(
-    response_edns: Option<Edns>,
-    mut response: MessageResponse<
+    response: MessageResponse<
         '_,
         'a,
         impl Iterator<Item = &'a Record> + Send + 'a,
@@ -444,29 +467,7 @@ async fn send_response<'a, R: ResponseHandler>(
         impl Iterator<Item = &'a Record> + Send + 'a,
     >,
     mut response_handle: R,
-) -> io::Result<ResponseInfo> {
-    if let Some(mut resp_edns) = response_edns {
-        /*
-        #[cfg(feature = "dnssec")]
-        {
-            // set edns DAU and DHU
-            // send along the algorithms which are supported by this authority
-            let mut algorithms = SupportedAlgorithms::default();
-            algorithms.set(Algorithm::RSASHA256);
-            algorithms.set(Algorithm::ECDSAP256SHA256);
-            algorithms.set(Algorithm::ECDSAP384SHA384);
-            algorithms.set(Algorithm::ED25519);
-
-            let dau = EdnsOption::DAU(algorithms);
-            let dhu = EdnsOption::DHU(algorithms);
-
-            resp_edns.options_mut().insert(dau);
-            resp_edns.options_mut().insert(dhu);
-        }
-        */
-        response.set_edns(resp_edns);
-    }
-
+) -> Result<ResponseInfo, NetError> {
     response_handle.send_response(response).await
 }
 
@@ -559,44 +560,35 @@ mod tests {
         assert!(is_rfc6303_zone("1.0.0.0.D.F.IP6.ARPA."));
     }
 
-    async fn make_handler(blocklist: Vec<&str>) -> StubRequestHandler {
-        make_handler_with_cap(blocklist, NonZeroUsize::new(10000).unwrap()).await
+    fn make_handler(blocklist: Vec<&str>) -> StubRequestHandler {
+        make_handler_with_cap(blocklist, NonZeroUsize::new(10000).unwrap())
     }
 
-    async fn make_handler_with_cap(
-        blocklist: Vec<&str>,
-        cache_cap: NonZeroUsize,
-    ) -> StubRequestHandler {
+    fn make_handler_with_cap(blocklist: Vec<&str>, cache_cap: NonZeroUsize) -> StubRequestHandler {
         use crate::event::StubSink;
-        use hickory_client::client::Client;
-        use hickory_proto::runtime::TokioRuntimeProvider;
-        use hickory_proto::udp::UdpClientStream;
+        use hickory_net::client::Client;
+        use hickory_net::runtime::TokioRuntimeProvider;
+        use hickory_net::udp::UdpClientStream;
 
         let blacklist: FxHashSet<String> = blocklist.into_iter().map(|s| s.to_string()).collect();
         let conn =
             UdpClientStream::builder("127.0.0.1:53".parse().unwrap(), TokioRuntimeProvider::new())
                 .build();
-        let (client, bg) = Client::connect(conn).await.unwrap();
+        let (client, bg) = Client::<TokioRuntimeProvider>::from_sender(conn);
         drop(bg);
         let (sink, _, _) = StubSink::new();
-        StubRequestHandler::new(
-            Arc::new(Mutex::new(client)),
-            blacklist,
-            Arc::new(sink),
-            false,
-            cache_cap,
-        )
+        StubRequestHandler::new(client, blacklist, Arc::new(sink), false, cache_cap)
     }
 
     #[tokio::test]
     async fn test_blocklist_exact_match() {
-        let handler = make_handler(vec!["ad.com."]).await;
+        let handler = make_handler(vec!["ad.com."]);
         assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);
     }
 
     #[tokio::test]
     async fn test_blocklist_subdomain_match() {
-        let handler = make_handler(vec!["ad.com."]).await;
+        let handler = make_handler(vec!["ad.com."]);
         assert!(
             handler
                 .is_blacklist_subdomain(&"sub.ad.com.".to_string())
@@ -611,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocklist_no_label_boundary_false_positive() {
-        let handler = make_handler(vec!["ad.com."]).await;
+        let handler = make_handler(vec!["ad.com."]);
         assert!(
             !handler
                 .is_blacklist_subdomain(&"bad.com.".to_string())
@@ -626,7 +618,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocklist_allowed_domain_not_blocked() {
-        let handler = make_handler(vec!["example.com."]).await;
+        let handler = make_handler(vec!["example.com."]);
         assert!(
             !handler
                 .is_blacklist_subdomain(&"notexample.com.".to_string())
@@ -637,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_eviction_returns_correct_results() {
         // Cache capacity of 2: after inserting 3 entries, the oldest is evicted
-        let handler = make_handler_with_cap(vec!["ad.com."], NonZeroUsize::new(2).unwrap()).await;
+        let handler = make_handler_with_cap(vec!["ad.com."], NonZeroUsize::new(2).unwrap());
 
         // Fill cache with 2 entries
         assert!(handler.is_blacklist_subdomain(&"ad.com.".to_string()).await);

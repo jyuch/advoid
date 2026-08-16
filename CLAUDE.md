@@ -65,7 +65,7 @@ The project uses Rust edition 2024. Windows MSVC builds use static CRT linking (
 
 ### Key Dependencies
 
-- `hickory-server`/`hickory-client`: DNS protocol
+- `hickory-server`/`hickory-net`/`hickory-proto`: DNS protocol (0.26; `hickory-client` was folded into `hickory-net`)
 - `tokio`: Async runtime
 - `axum`: Metrics HTTP server
 - `aws-sdk-s3`: S3 event sink
@@ -83,7 +83,7 @@ The crate is split into a library (`src/lib.rs` re-exports all modules) and a bi
 
 ### Hickory DNS Usage Notes
 
-`docs/hickory-dns/` contains notes on how to use the Hickory DNS library (hickory-server, hickory-client, hickory-proto). When investigating or implementing Hickory DNS APIs, document the findings there for future reference.
+`docs/hickory-dns/` contains notes on how to use the Hickory DNS library (hickory-server, hickory-net, hickory-proto). When investigating or implementing Hickory DNS APIs, document the findings there for future reference. `client-migration.md` covers the 0.25 → 0.26 crate split and client API changes.
 
 ## Important Notes
 
