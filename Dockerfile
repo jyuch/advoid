@@ -13,5 +13,11 @@ RUN --mount=type=bind,source=src,target=src \
     cp ./target/release/advoid /bin/advoid
 
 FROM public.ecr.aws/docker/library/debian:stable-slim AS final
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get clean
+
 COPY --from=build /bin/advoid /bin/advoid
+
 ENTRYPOINT ["/bin/advoid"]
