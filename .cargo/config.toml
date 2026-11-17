@@ -1,8 +1,5 @@
 [registry]
 global-min-publish-age = "7 days"
 
-[target.i686-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-Ctarget-feature=+crt-static"]
